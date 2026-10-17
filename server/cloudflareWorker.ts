@@ -4,21 +4,30 @@
 
 import { onRequest } from '../functions/api/[[path]]';
 
-interface CloudflareEnv extends Record<string, string | undefined> {
+interface CloudflareEnv {
   ASSETS?: {
     fetch: (request: Request) => Promise<Response>;
   };
+  [key: string]: unknown;
 }
 
 export default {
   async fetch(request: Request, env: CloudflareEnv): Promise<Response> {
     const url = new URL(request.url);
 
+    // Estraiamo solo le variabili stringa per il backend engine
+    const stringEnv: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(env || {})) {
+      if (typeof v === 'string') {
+        stringEnv[k] = v;
+      }
+    }
+
     // Tutte le rotte /api/* vengono gestite dal backend Edge DemInvest
     if (url.pathname.startsWith('/api/')) {
       return onRequest({
         request,
-        env,
+        env: stringEnv,
       });
     }
 
