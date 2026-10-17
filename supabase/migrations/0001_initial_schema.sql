@@ -46,6 +46,7 @@ CREATE OR REPLACE FUNCTION public.enforce_single_user_mode()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
   single_mode BOOLEAN;
@@ -55,7 +56,9 @@ BEGIN
   FROM public.application_settings
   WHERE key = 'SINGLE_USER_MODE';
 
-  SELECT COUNT(*) INTO existing_count FROM public.profiles;
+  SELECT COUNT(*) INTO existing_count
+  FROM public.profiles
+  WHERE id <> NEW.id;
 
   IF COALESCE(single_mode, TRUE) AND existing_count >= 1 THEN
     RAISE EXCEPTION 'SINGLE_USER_MODE attiva: DemInvest è configurata per uso personale esclusivo del proprietario.';
@@ -65,6 +68,7 @@ BEGIN
     NEW.is_owner := TRUE;
   END IF;
 
+  NEW.updated_at := NOW();
   RETURN NEW;
 END;
 $$;

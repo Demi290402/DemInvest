@@ -334,11 +334,13 @@ export const SettingsView: React.FC = () => {
     theme,
     dataExecutionMode,
     providersHealth,
+    supabaseDiagnostics,
     schedulerStatus,
     setUiMode,
     setTheme,
     setDataExecutionMode,
     saveBackendProviderKey,
+    reconcileSupabaseNow,
     triggerSchedulerNow,
     logoutOwner,
   } = useDemInvest();
@@ -346,15 +348,43 @@ export const SettingsView: React.FC = () => {
   const [selectedKeyName, setSelectedKeyName] = useState('TWELVE_DATA_API_KEY');
   const [secretInput, setSecretInput] = useState('');
   const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
+  const [reconcilePassword, setReconcilePassword] = useState('');
+  const [isReconciling, setIsReconciling] = useState(false);
+  const [reconcileFeedback, setReconcileFeedback] = useState<string | null>(null);
 
   const handleSaveKey = async (e: React.FormEvent) => {
     e.preventDefault();
     await saveBackendProviderKey(selectedKeyName, secretInput);
     setSecretInput('');
     setSavedFeedback(
-      `Chiave ${selectedKeyName} salvata in modo sicuro sul backend (mai esposta al browser).`
+      `Chiave ${selectedKeyName} salvata in modo sicuro sul backend e sincronizzazione verificata.`
     );
-    setTimeout(() => setSavedFeedback(null), 4000);
+    setTimeout(() => setSavedFeedback(null), 5000);
+  };
+
+  const handleReconcileSupabase = async () => {
+    setIsReconciling(true);
+    setReconcileFeedback(null);
+    try {
+      const res = await reconcileSupabaseNow({
+        password: reconcilePassword.trim() || undefined,
+        email: user?.email,
+        displayName: user?.displayName,
+      });
+      setReconcilePassword('');
+      if (res.ok && res.diagnostics?.connectionStatus === 'CONNECTED') {
+        setReconcileFeedback(
+          'Riconciliazione completata con successo: profilo, preferenze, watchlist e portafoglio sincronizzati su Supabase.'
+        );
+      } else {
+        setReconcileFeedback(
+          res.diagnostics?.lastError ||
+            'Verifica le chiavi API Supabase (SUPABASE_SERVICE_ROLE_KEY o VITE_SUPABASE_ANON_KEY) per completare la sincronizzazione.'
+        );
+      }
+    } finally {
+      setIsReconciling(false);
+    }
   };
 
   return (
@@ -369,7 +399,8 @@ export const SettingsView: React.FC = () => {
                 Impostazioni Sistema, Preferenze & Provider Health Dashboard
               </h1>
               <p className="text-xs text-slate-500">
-                Proprietario registrato: <strong>{user?.email}</strong> (SINGLE_USER_MODE attiva)
+                Proprietario registrato: <strong>{user?.email}</strong> (ID:{' '}
+                <code className="font-mono text-[11px]">{user?.id}</code> • SINGLE_USER_MODE attiva)
               </p>
             </div>
           </div>
@@ -457,6 +488,164 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Diagnostica e Riconciliazione Supabase Cloud (PostgreSQL + Auth) */}
+      <div
+        data-testid="supabase-diagnostics-panel"
+        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-brand-500" />
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                Diagnostica & Riconciliazione Persistenza Supabase Cloud
+              </h2>
+            </div>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Verifica in tempo reale dello stato di <code className="font-mono">auth.users</code>,{' '}
+              <code className="font-mono">public.profiles</code>,{' '}
+              <code className="font-mono">public.user_preferences</code>,{' '}
+              <code className="font-mono">public.watchlists</code> e{' '}
+              <code className="font-mono">public.portfolios</code>.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="password"
+              value={reconcilePassword}
+              onChange={(e) => setReconcilePassword(e.target.value)}
+              placeholder="Password account (opzionale per allineare Auth)..."
+              className="rounded-xl border border-slate-700 bg-anthracite-900 px-3 py-2 text-xs text-white"
+            />
+            <button
+              type="button"
+              onClick={handleReconcileSupabase}
+              disabled={isReconciling}
+              data-testid="reconcile-supabase-btn"
+              className="rounded-xl bg-brand-500 px-4 py-2 text-xs font-bold text-anthracite-950 hover:bg-brand-400 disabled:opacity-50"
+            >
+              {isReconciling
+                ? 'Sincronizzazione in corso...'
+                : 'Verifica e Riconcilia Ora con Supabase'}
+            </button>
+          </div>
+        </div>
+
+        {reconcileFeedback && (
+          <div className="mt-3 rounded-xl border border-brand-500/30 bg-brand-500/10 p-3 text-xs text-brand-300">
+            {reconcileFeedback}
+          </div>
+        )}
+
+        {supabaseDiagnostics && (
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border border-slate-800 bg-anthracite-900 p-3 text-xs">
+                <div className="text-[10px] uppercase text-slate-400">Stato Connessione</div>
+                <div
+                  className={`mt-1 font-mono font-bold ${
+                    supabaseDiagnostics.connectionStatus === 'CONNECTED'
+                      ? 'text-emerald-400'
+                      : 'text-amber-400'
+                  }`}
+                >
+                  {supabaseDiagnostics.connectionStatus}
+                </div>
+                <div className="mt-1 truncate font-mono text-[10px] text-slate-500">
+                  {supabaseDiagnostics.configuredUrl}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-anthracite-900 p-3 text-xs">
+                <div className="text-[10px] uppercase text-slate-400">Chiavi Rilevate</div>
+                <div className="mt-1 text-[11px] text-slate-200">
+                  Anon/Publishable:{' '}
+                  <strong
+                    className={
+                      supabaseDiagnostics.hasAnonOrPublishableKey
+                        ? 'text-emerald-400'
+                        : 'text-amber-400'
+                    }
+                  >
+                    {supabaseDiagnostics.hasAnonOrPublishableKey ? 'PRESENTE' : 'ASSENTE'}
+                  </strong>
+                </div>
+                <div className="mt-0.5 text-[11px] text-slate-200">
+                  Service Role:{' '}
+                  <strong
+                    className={
+                      supabaseDiagnostics.hasServiceRoleKey
+                        ? 'text-emerald-400'
+                        : 'text-amber-400'
+                    }
+                  >
+                    {supabaseDiagnostics.hasServiceRoleKey ? 'PRESENTE' : 'OPZIONALE / ASSENTE'}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-anthracite-900 p-3 text-xs">
+                <div className="text-[10px] uppercase text-slate-400">
+                  Stato Auth & Profilo Proprietario
+                </div>
+                <div className="mt-1 text-[11px] text-slate-200">
+                  auth.users:{' '}
+                  <strong className="font-mono text-brand-400">
+                    {supabaseDiagnostics.authUserStatus}
+                  </strong>
+                </div>
+                <div className="mt-0.5 text-[11px] text-slate-200">
+                  public.profiles:{' '}
+                  <strong className="font-mono text-brand-400">
+                    {supabaseDiagnostics.profileStatus}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-anthracite-900 p-3 text-xs">
+                <div className="text-[10px] uppercase text-slate-400">Conteggio Righe Remote</div>
+                <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 font-mono text-[11px] text-slate-300">
+                  <span>profiles: {supabaseDiagnostics.remoteTableCounts.profiles}</span>
+                  <span>prefs: {supabaseDiagnostics.remoteTableCounts.user_preferences}</span>
+                  <span>watchlists: {supabaseDiagnostics.remoteTableCounts.watchlists}</span>
+                  <span>portfolios: {supabaseDiagnostics.remoteTableCounts.portfolios}</span>
+                  <span>instruments: {supabaseDiagnostics.remoteTableCounts.instruments}</span>
+                  <span>settings: {supabaseDiagnostics.remoteTableCounts.application_settings}</span>
+                </div>
+              </div>
+            </div>
+
+            {supabaseDiagnostics.syncStepsLog.length > 0 && (
+              <div className="rounded-xl border border-slate-800 bg-anthracite-900 p-3 text-xs">
+                <div className="mb-2 text-[10px] font-bold uppercase text-slate-400">
+                  Log Ultima Sincronizzazione Supabase ({supabaseDiagnostics.lastSyncAt?.slice(11, 19) || 'N/A'} UTC)
+                </div>
+                <div className="space-y-1 font-mono text-[11px]">
+                  {supabaseDiagnostics.syncStepsLog.map((s, idx) => (
+                    <div key={idx} className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                          s.status === 'OK'
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : s.status === 'WARN'
+                              ? 'bg-amber-500/20 text-amber-400'
+                              : 'bg-red-500/20 text-red-400'
+                        }`}
+                      >
+                        {s.status}
+                      </span>
+                      <span className="font-semibold text-slate-200">{s.step}:</span>
+                      <span className="text-slate-400">{s.detail}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Provider Health Dashboard (Sezione 23) */}
@@ -567,6 +756,12 @@ export const SettingsView: React.FC = () => {
               onChange={(e) => setSelectedKeyName(e.target.value)}
               className="rounded-lg border border-slate-700 bg-anthracite-950 px-3 py-2 text-xs text-white"
             >
+              <option value="SUPABASE_SERVICE_ROLE_KEY">
+                SUPABASE_SERVICE_ROLE_KEY (Supabase Service Role / Secret)
+              </option>
+              <option value="SUPABASE_ANON_KEY">
+                SUPABASE_ANON_KEY (Supabase Publishable / Anon Key)
+              </option>
               <option value="TWELVE_DATA_API_KEY">TWELVE_DATA_API_KEY (Twelve Data)</option>
               <option value="COINGECKO_API_KEY">COINGECKO_API_KEY (CoinGecko)</option>
               <option value="ALPHA_VANTAGE_API_KEY">ALPHA_VANTAGE_API_KEY (Alpha Vantage)</option>

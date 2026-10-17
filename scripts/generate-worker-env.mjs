@@ -4,9 +4,9 @@
 // Su Cloudflare Workers Builds, le variabili configurate nella sezione Build
 // sono presenti in process.env durante `npm run build`, ma non vengono passate
 // automaticamente al runtime del Worker da `npx wrangler deploy`.
-// Questo script genera `server/generatedWorkerEnv.ts` (escluso da Git e mai
-// incluso nel bundle frontend `./dist`) così il Worker Edge ha accesso
-// immediato a tutte le variabili configurate nella dashboard Cloudflare.
+// Questo script genera `server/generatedWorkerEnv.ts` (mai incluso nel bundle
+// frontend `./dist`) così il Worker Edge ha accesso immediato a tutte le
+// variabili configurate nella dashboard Cloudflare.
 // ==============================================================================
 
 import fs from 'node:fs';
@@ -17,7 +17,9 @@ const ENV_KEYS = [
   'SUPABASE_URL',
   'VITE_SUPABASE_URL',
   'VITE_SUPABASE_ANON_KEY',
+  'VITE_SUPABASE_PUBLISHABLE_KEY',
   'SUPABASE_ANON_KEY',
+  'SUPABASE_PUBLISHABLE_KEY',
   'SUPABASE_SERVICE_ROLE_KEY',
   'VAPID_PUBLIC_KEY',
   'VITE_VAPID_PUBLIC_KEY',

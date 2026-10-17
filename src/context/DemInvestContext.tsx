@@ -14,6 +14,7 @@ import {
   PortfolioTransaction,
   ProviderHealthInfo,
   SchedulerStatusInfo,
+  SupabaseSyncDiagnostics,
   ThemeMode,
   TimeHorizon,
   UIMode,
@@ -26,6 +27,7 @@ import {
   INITIAL_UNDERLYING_ASSETS,
 } from '../engines/instrumentRegistry';
 import { FxRateTable } from '../engines/portfolioEngine';
+import { getOrInitFrontendSupabaseClient } from '../lib/supabaseClient';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -78,6 +80,7 @@ interface DemInvestContextValue {
   aiToolLogs: AIToolCallLog[];
   schedulerStatus: SchedulerStatusInfo | null;
   providersHealth: ProviderHealthInfo[];
+  supabaseDiagnostics: SupabaseSyncDiagnostics | null;
   vapidPublicKey: string;
   pushPermissionState: NotificationPermission | 'unsupported';
   // Actions
@@ -140,6 +143,11 @@ interface DemInvestContextValue {
   }) => Promise<void>;
   sendAiMessage: (prompt: string) => Promise<void>;
   saveBackendProviderKey: (keyName: string, secretValue: string) => Promise<void>;
+  reconcileSupabaseNow: (params?: {
+    password?: string;
+    email?: string;
+    displayName?: string;
+  }) => Promise<{ ok: boolean; diagnostics: SupabaseSyncDiagnostics | null }>;
 }
 
 const DemInvestContext = createContext<DemInvestContextValue | undefined>(undefined);
@@ -189,6 +197,8 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [aiToolLogs, setAiToolLogs] = useState<AIToolCallLog[]>([]);
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatusInfo | null>(null);
   const [providersHealth, setProvidersHealth] = useState<ProviderHealthInfo[]>([]);
+  const [supabaseDiagnostics, setSupabaseDiagnostics] =
+    useState<SupabaseSyncDiagnostics | null>(null);
   const [vapidPublicKey, setVapidPublicKey] = useState('');
   const [pushPermissionState, setPushPermissionState] = useState<
     NotificationPermission | 'unsupported'
@@ -264,6 +274,7 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (data.aiToolLogs) setAiToolLogs(data.aiToolLogs);
         if (data.schedulerStatus) setSchedulerStatus(data.schedulerStatus);
         if (data.providersHealth) setProvidersHealth(data.providersHealth);
+        if (data.supabaseDiagnostics) setSupabaseDiagnostics(data.supabaseDiagnostics);
         if (data.vapidPublicKey) setVapidPublicKey(data.vapidPublicKey);
       }
     } finally {
@@ -292,6 +303,9 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (res.ok) {
       const data = await res.json();
       setUser(data.user);
+      if (data.supabaseDiagnostics) {
+        setSupabaseDiagnostics(data.supabaseDiagnostics);
+      }
     }
   };
 
@@ -334,9 +348,20 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!res.ok) {
       return { ok: false, error: data.error || 'Errore di registrazione' };
     }
+    const sbClient = getOrInitFrontendSupabaseClient();
+    if (sbClient) {
+      await sbClient.auth
+        .signUp({
+          email: params.email.trim().toLowerCase(),
+          password: params.password,
+          options: { data: { display_name: params.displayName, is_owner: true } },
+        })
+        .catch(() => null);
+    }
     setHasOwnerAccount(true);
     setIsAuthenticated(true);
     setUser(data.user);
+    if (data.supabaseDiagnostics) setSupabaseDiagnostics(data.supabaseDiagnostics);
     return { ok: true };
   };
 
@@ -350,8 +375,19 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!res.ok) {
       return { ok: false, error: data.error || 'Credenziali non valide' };
     }
+    const sbClient = getOrInitFrontendSupabaseClient();
+    if (sbClient) {
+      await sbClient.auth
+        .signInWithPassword({
+          email: params.email.trim().toLowerCase(),
+          password: params.password,
+        })
+        .catch(() => null);
+    }
+    setHasOwnerAccount(true);
     setIsAuthenticated(true);
     setUser(data.user);
+    if (data.supabaseDiagnostics) setSupabaseDiagnostics(data.supabaseDiagnostics);
     return { ok: true };
   };
 
@@ -657,9 +693,34 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
     if (res.ok) {
       const data = await res.json();
-      setProvidersHealth(data.providersHealth);
+      if (data.providersHealth) setProvidersHealth(data.providersHealth);
+      if (data.supabaseDiagnostics) setSupabaseDiagnostics(data.supabaseDiagnostics);
       await refreshMarketQuotes();
     }
+  };
+
+  const reconcileSupabaseNow: DemInvestContextValue['reconcileSupabaseNow'] = async (params) => {
+    const res = await fetch('/api/supabase/reconcile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        password: params?.password,
+        email: params?.email || user?.email,
+        displayName: params?.displayName || user?.displayName,
+      }),
+    });
+    if (!res.ok) {
+      return { ok: false, diagnostics: supabaseDiagnostics };
+    }
+    const data = await res.json();
+    if (data.supabaseDiagnostics) {
+      setSupabaseDiagnostics(data.supabaseDiagnostics);
+    }
+    if (data.user) {
+      setUser(data.user);
+      setHasOwnerAccount(true);
+    }
+    return { ok: true, diagnostics: data.supabaseDiagnostics || null };
   };
 
   return (
@@ -695,6 +756,7 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         aiToolLogs,
         schedulerStatus,
         providersHealth,
+        supabaseDiagnostics,
         vapidPublicKey,
         pushPermissionState,
         setUiMode,
@@ -728,6 +790,7 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addJournalEntry,
         sendAiMessage,
         saveBackendProviderKey,
+        reconcileSupabaseNow,
       }}
     >
       {children}

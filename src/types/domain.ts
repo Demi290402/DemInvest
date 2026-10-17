@@ -687,3 +687,47 @@ export interface UserProfileAndPreferences {
   maxDailyNotifications: number;
   createdAt: string;
 }
+
+/**
+ * 16. Diagnostica e Riconciliazione Supabase Cloud
+ */
+export interface SupabaseSyncDiagnostics {
+  configuredUrl: string;
+  hasAnonOrPublishableKey: boolean;
+  hasServiceRoleKey: boolean;
+  connectionStatus:
+    | 'CONNECTED'
+    | 'MISSING_CREDENTIALS'
+    | 'AUTH_ERROR'
+    | 'SCHEMA_INCOMPLETE'
+    | 'NETWORK_ERROR';
+  authUserStatus:
+    | 'PRESENT_IN_AUTH_USERS'
+    | 'NOT_FOUND_IN_AUTH_USERS'
+    | 'EMAIL_UNCONFIRMED'
+    | 'NOT_CHECKED_NO_KEY';
+  profileStatus:
+    | 'PRESENT_IN_PROFILES'
+    | 'MISSING_IN_PROFILES'
+    | 'RECONCILED'
+    | 'NOT_CHECKED';
+  lastSyncAt: string | null;
+  lastError: string | null;
+  remoteTableCounts: {
+    profiles: number;
+    user_preferences: number;
+    watchlists: number;
+    portfolios: number;
+    portfolio_transactions: number;
+    alert_rules: number;
+    instruments: number;
+    application_settings: number;
+  };
+  syncStepsLog: {
+    step: string;
+    status: 'OK' | 'WARN' | 'ERROR';
+    detail: string;
+    timestamp: string;
+  }[];
+}
+

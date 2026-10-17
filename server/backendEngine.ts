@@ -21,6 +21,7 @@ import {
   PortfolioTransaction,
   ProviderHealthInfo,
   SchedulerStatusInfo,
+  SupabaseSyncDiagnostics,
   TimeHorizon,
   UnderlyingAsset,
   UserProfileAndPreferences,
@@ -88,12 +89,15 @@ function getEnvVar(key: string): string {
   return '';
 }
 
-interface RuntimeSecrets {
+export interface RuntimeSecrets {
   COINGECKO_API_KEY?: string;
   TWELVE_DATA_API_KEY?: string;
   ALPHA_VANTAGE_API_KEY?: string;
   FRED_API_KEY?: string;
   GEMINI_API_KEY?: string;
+  SUPABASE_URL?: string;
+  SUPABASE_ANON_KEY?: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
 }
 
 function loadRuntimeSecrets(): RuntimeSecrets {
@@ -124,6 +128,25 @@ function loadRuntimeSecrets(): RuntimeSecrets {
       getEnvVar('GEMINI_API_KEY') ||
       memoryRuntimeSecrets.GEMINI_API_KEY ||
       fileSecrets.GEMINI_API_KEY ||
+      '',
+    SUPABASE_URL:
+      getEnvVar('SUPABASE_URL') ||
+      getEnvVar('VITE_SUPABASE_URL') ||
+      memoryRuntimeSecrets.SUPABASE_URL ||
+      fileSecrets.SUPABASE_URL ||
+      'https://yumqptqhdlqcoudpxnrc.supabase.co',
+    SUPABASE_ANON_KEY:
+      getEnvVar('VITE_SUPABASE_ANON_KEY') ||
+      getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY') ||
+      getEnvVar('SUPABASE_ANON_KEY') ||
+      getEnvVar('SUPABASE_PUBLISHABLE_KEY') ||
+      memoryRuntimeSecrets.SUPABASE_ANON_KEY ||
+      fileSecrets.SUPABASE_ANON_KEY ||
+      '',
+    SUPABASE_SERVICE_ROLE_KEY:
+      getEnvVar('SUPABASE_SERVICE_ROLE_KEY') ||
+      memoryRuntimeSecrets.SUPABASE_SERVICE_ROLE_KEY ||
+      fileSecrets.SUPABASE_SERVICE_ROLE_KEY ||
       '',
   };
 }
@@ -396,136 +419,490 @@ export function saveDbState(state: PersistedDatabaseState): void {
   void pushStateToSupabaseIfConfigured(state);
 }
 
+let lastSupabaseDiagnostics: SupabaseSyncDiagnostics = {
+  configuredUrl: 'https://yumqptqhdlqcoudpxnrc.supabase.co',
+  hasAnonOrPublishableKey: false,
+  hasServiceRoleKey: false,
+  connectionStatus: 'MISSING_CREDENTIALS',
+  authUserStatus: 'NOT_CHECKED_NO_KEY',
+  profileStatus: 'NOT_CHECKED',
+  lastSyncAt: null,
+  lastError: null,
+  remoteTableCounts: {
+    profiles: 0,
+    user_preferences: 0,
+    watchlists: 0,
+    portfolios: 0,
+    portfolio_transactions: 0,
+    alert_rules: 0,
+    instruments: 0,
+    application_settings: 0,
+  },
+  syncStepsLog: [],
+};
+
 function getSupabaseConfig(): {
   baseUrl: string;
   apiKey: string;
+  anonKey: string;
   serviceRoleKey: string;
 } | null {
-  const rawUrl =
+  const secrets = loadRuntimeSecrets();
+  const rawUrl = (
+    secrets.SUPABASE_URL ||
     getEnvVar('SUPABASE_URL') ||
     getEnvVar('VITE_SUPABASE_URL') ||
-    'https://yumqptqhdlqcoudpxnrc.supabase.co';
-  const serviceRoleKey = getEnvVar('SUPABASE_SERVICE_ROLE_KEY');
-  const anonKey = getEnvVar('VITE_SUPABASE_ANON_KEY') || getEnvVar('SUPABASE_ANON_KEY');
+    'https://yumqptqhdlqcoudpxnrc.supabase.co'
+  ).trim();
+  const serviceRoleKey = (secrets.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+  const anonKey = (secrets.SUPABASE_ANON_KEY || '').trim();
   const apiKey = serviceRoleKey || anonKey;
-  if (!rawUrl || !apiKey) return null;
+
+  lastSupabaseDiagnostics.configuredUrl = rawUrl.replace(/\/$/, '');
+  lastSupabaseDiagnostics.hasAnonOrPublishableKey = Boolean(anonKey);
+  lastSupabaseDiagnostics.hasServiceRoleKey = Boolean(serviceRoleKey);
+
+  if (!rawUrl || !apiKey) {
+    lastSupabaseDiagnostics.connectionStatus = 'MISSING_CREDENTIALS';
+    return null;
+  }
   return {
     baseUrl: rawUrl.replace(/\/$/, ''),
     apiKey,
+    anonKey,
     serviceRoleKey,
   };
 }
 
-export async function pullStateFromSupabaseIfConfigured(): Promise<void> {
-  if (supabaseInitialPullDone) return;
+function buildSupabaseHeaders(
+  apiKey: string,
+  bearerToken?: string,
+  extraHeaders?: Record<string, string>
+): Record<string, string> {
+  const token = (bearerToken || apiKey).trim();
+  const headers: Record<string, string> = {
+    apikey: apiKey,
+    ...extraHeaders,
+  };
+  // Invia Authorization: Bearer sia per JWT (eyJ...) sia per chiavi Supabase compatibili
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+async function supabaseSmartFetch(
+  url: string,
+  apiKey: string,
+  options: RequestInit & { bearerToken?: string; extraHeaders?: Record<string, string> } = {}
+): Promise<Response> {
+  const { bearerToken, extraHeaders, ...fetchOpts } = options;
+  const firstHeaders = buildSupabaseHeaders(apiKey, bearerToken, extraHeaders);
+  const res = await fetch(url, {
+    ...fetchOpts,
+    headers: firstHeaders,
+  });
+
+  // Se la chiave è nel nuovo formato non-JWT (`sb_publishable_` / `sb_secret_`) e PostgREST
+  // rifiuta l'header Authorization: Bearer non-JWT con 401, riprova usando solo `apikey`.
+  if (
+    res.status === 401 &&
+    (apiKey.startsWith('sb_') || (bearerToken && bearerToken.startsWith('sb_')))
+  ) {
+    const fallbackHeaders: Record<string, string> = {
+      apikey: apiKey,
+      ...extraHeaders,
+    };
+    return fetch(url, {
+      ...fetchOpts,
+      headers: fallbackHeaders,
+    });
+  }
+
+  return res;
+}
+
+let cachedSupabaseUserAccessToken: string | null = null;
+
+export function getSupabaseDiagnosticsSnapshot(): SupabaseSyncDiagnostics {
+  getSupabaseConfig();
+  return { ...lastSupabaseDiagnostics };
+}
+
+export async function pullStateFromSupabaseIfConfigured(force = false): Promise<void> {
+  if (supabaseInitialPullDone && !force) return;
   const cfg = getSupabaseConfig();
   if (!cfg) return;
 
-  const headers = {
-    apikey: cfg.apiKey,
-    Authorization: `Bearer ${cfg.apiKey}`,
-    Accept: 'application/json',
-  };
+  const activeBearer = cfg.serviceRoleKey || cachedSupabaseUserAccessToken || cfg.apiKey;
 
   try {
     // 1. Legge da public.application_settings (sempre presente nello schema 0001)
-    const settingsRes = await fetch(
+    const settingsRes = await supabaseSmartFetch(
       `${cfg.baseUrl}/rest/v1/application_settings?key=eq.DEMINVEST_RUNTIME_STATE&select=value`,
-      { headers }
+      cfg.apiKey,
+      { bearerToken: activeBearer, extraHeaders: { Accept: 'application/json' } }
     );
     if (settingsRes.ok) {
+      lastSupabaseDiagnostics.connectionStatus = 'CONNECTED';
       const rows = (await settingsRes.json()) as { value?: Partial<PersistedDatabaseState> }[];
       if (Array.isArray(rows) && rows[0]?.value && typeof rows[0].value === 'object') {
-        dbCache = { ...getDefaultDbState(), ...rows[0].value };
+        const currentOwner = dbCache?.ownerAccount;
+        dbCache = {
+          ...getDefaultDbState(),
+          ...rows[0].value,
+          ownerAccount: rows[0].value.ownerAccount || currentOwner || null,
+        };
+        if (dbCache.ownerAccount) {
+          supabaseInitialPullDone = true;
+          return;
+        }
+      }
+    } else if (settingsRes.status === 401 || settingsRes.status === 403) {
+      lastSupabaseDiagnostics.connectionStatus = 'AUTH_ERROR';
+      lastSupabaseDiagnostics.lastError = `Autenticazione Supabase rifiutata (HTTP ${settingsRes.status})`;
+    }
+
+    // 2. Fallback a public.app_state_store
+    const res = await supabaseSmartFetch(
+      `${cfg.baseUrl}/rest/v1/app_state_store?id=eq.deminvest_primary_state&select=state_json`,
+      cfg.apiKey,
+      { bearerToken: activeBearer, extraHeaders: { Accept: 'application/json' } }
+    );
+    if (res.ok) {
+      lastSupabaseDiagnostics.connectionStatus = 'CONNECTED';
+      const rows = (await res.json()) as { state_json?: Partial<PersistedDatabaseState> }[];
+      if (Array.isArray(rows) && rows[0]?.state_json) {
+        const currentOwner = dbCache?.ownerAccount;
+        dbCache = {
+          ...getDefaultDbState(),
+          ...rows[0].state_json,
+          ownerAccount: rows[0].state_json.ownerAccount || currentOwner || null,
+        };
+        if (dbCache.ownerAccount) {
+          supabaseInitialPullDone = true;
+          return;
+        }
+      }
+    }
+
+    // 3. Fallback a public.profiles (ricostruisce ownerAccount se presente in tabella relazionale)
+    const profRes = await supabaseSmartFetch(
+      `${cfg.baseUrl}/rest/v1/profiles?select=*&order=created_at.asc&limit=1`,
+      cfg.apiKey,
+      { bearerToken: activeBearer, extraHeaders: { Accept: 'application/json' } }
+    );
+    if (profRes.ok) {
+      const profiles = (await profRes.json()) as {
+        id: string;
+        email: string;
+        display_name: string;
+        onboarding_completed?: boolean;
+        created_at?: string;
+      }[];
+      if (Array.isArray(profiles) && profiles[0]?.email) {
+        const p = profiles[0];
+        lastSupabaseDiagnostics.profileStatus = 'PRESENT_IN_PROFILES';
+        lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
+        if (!dbCache) dbCache = getDefaultDbState();
+        if (!dbCache.ownerAccount) {
+          dbCache.ownerAccount = {
+            passwordHash: 'SUPABASE_AUTH_MANAGED',
+            user: {
+              id: p.id,
+              email: p.email,
+              displayName: p.display_name || 'Investitore Proprietario',
+              isOwner: true,
+              onboardingCompleted: Boolean(p.onboarding_completed),
+              uiMode: 'SIMPLE',
+              theme: 'DARK',
+              dataExecutionMode: 'LIVE',
+              preferredCurrency: 'EUR',
+              timezone: 'Europe/Rome',
+              experienceLevel: 'INTERMEDIATE',
+              riskTolerance: 'MODERATE',
+              investmentGoals: ['CAPITAL_GROWTH', 'RISK_CONTROL'],
+              preferredHorizons: ['BREVE', 'MEDIO', 'LUNGO'],
+              preferredMarkets: ['CRYPTO', 'EQUITY', 'ETF'],
+              selectedBrokers: ['TRADE_REPUBLIC', 'IBKR', 'AVATRADE', 'MT5'],
+              quietHoursStart: '22:30',
+              quietHoursEnd: '07:30',
+              maxDailyNotifications: 15,
+              createdAt: p.created_at || new Date().toISOString(),
+            },
+          };
+        }
         supabaseInitialPullDone = true;
         return;
       }
     }
 
-    // 2. Fallback a public.app_state_store
-    const res = await fetch(
-      `${cfg.baseUrl}/rest/v1/app_state_store?id=eq.deminvest_primary_state&select=state_json`,
-      { headers }
-    );
-    if (res.ok) {
-      const rows = (await res.json()) as { state_json?: Partial<PersistedDatabaseState> }[];
-      if (Array.isArray(rows) && rows[0]?.state_json) {
-        dbCache = { ...getDefaultDbState(), ...rows[0].state_json };
-        supabaseInitialPullDone = true;
+    // 4. Fallback a auth.users tramite service_role (se l'utente è in auth.users ma manca in public.profiles)
+    if (cfg.serviceRoleKey) {
+      const adminUsersRes = await supabaseSmartFetch(
+        `${cfg.baseUrl}/auth/v1/admin/users`,
+        cfg.serviceRoleKey
+      );
+      if (adminUsersRes.ok) {
+        const data = (await adminUsersRes.json()) as {
+          users?: {
+            id: string;
+            email?: string;
+            user_metadata?: { display_name?: string };
+            created_at?: string;
+          }[];
+        };
+        const firstAuthUser = data.users?.[0];
+        if (firstAuthUser?.email) {
+          lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
+          if (!dbCache) dbCache = getDefaultDbState();
+          if (!dbCache.ownerAccount) {
+            dbCache.ownerAccount = {
+              passwordHash: 'SUPABASE_AUTH_MANAGED',
+              user: {
+                id: firstAuthUser.id,
+                email: firstAuthUser.email.toLowerCase(),
+                displayName:
+                  firstAuthUser.user_metadata?.display_name ||
+                  firstAuthUser.email.split('@')[0] ||
+                  'Investitore Proprietario',
+                isOwner: true,
+                onboardingCompleted: false,
+                uiMode: 'SIMPLE',
+                theme: 'DARK',
+                dataExecutionMode: 'LIVE',
+                preferredCurrency: 'EUR',
+                timezone: 'Europe/Rome',
+                experienceLevel: 'INTERMEDIATE',
+                riskTolerance: 'MODERATE',
+                investmentGoals: ['CAPITAL_GROWTH', 'RISK_CONTROL'],
+                preferredHorizons: ['BREVE', 'MEDIO', 'LUNGO'],
+                preferredMarkets: ['CRYPTO', 'EQUITY', 'ETF'],
+                selectedBrokers: ['TRADE_REPUBLIC', 'IBKR', 'AVATRADE', 'MT5'],
+                quietHoursStart: '22:30',
+                quietHoursEnd: '07:30',
+                maxDailyNotifications: 15,
+                createdAt: firstAuthUser.created_at || new Date().toISOString(),
+              },
+            };
+            await pushStateToSupabaseIfConfigured(dbCache);
+          }
+          supabaseInitialPullDone = true;
+        }
       }
     }
-  } catch {
-    // Fallback al cache locale / default se Supabase non è raggiungibile
+  } catch (err) {
+    lastSupabaseDiagnostics.connectionStatus = 'NETWORK_ERROR';
+    lastSupabaseDiagnostics.lastError =
+      err instanceof Error ? err.message : 'Errore di rete verso Supabase REST';
   }
 }
 
 export async function pushStateToSupabaseIfConfigured(
-  stateToPush?: PersistedDatabaseState
-): Promise<void> {
+  stateToPush?: PersistedDatabaseState,
+  options?: { plainPassword?: string }
+): Promise<SupabaseSyncDiagnostics> {
   const cfg = getSupabaseConfig();
-  if (!cfg) return;
+  const stepsLog: SupabaseSyncDiagnostics['syncStepsLog'] = [];
+  const logStep = (step: string, status: 'OK' | 'WARN' | 'ERROR', detail: string) => {
+    stepsLog.push({
+      step,
+      status,
+      detail,
+      timestamp: new Date().toISOString(),
+    });
+  };
+
+  if (!cfg) {
+    logStep(
+      'Verifica Credenziali Supabase',
+      'WARN',
+      'Nessuna chiave API Supabase configurata nel runtime (configura SUPABASE_SERVICE_ROLE_KEY o VITE_SUPABASE_ANON_KEY).'
+    );
+    lastSupabaseDiagnostics.syncStepsLog = stepsLog;
+    return getSupabaseDiagnosticsSnapshot();
+  }
 
   const state = stateToPush || getDbState();
   const nowIso = new Date().toISOString();
-  const restHeaders = {
-    apikey: cfg.apiKey,
-    Authorization: `Bearer ${cfg.apiKey}`,
+  const upsertHeaders = {
     'Content-Type': 'application/json',
     Prefer: 'resolution=merge-duplicates',
   };
 
   try {
-    // 1. Salva sempre in public.application_settings (tabella garantita dallo schema iniziale)
-    await fetch(`${cfg.baseUrl}/rest/v1/application_settings`, {
-      method: 'POST',
-      headers: restHeaders,
-      body: JSON.stringify({
-        key: 'DEMINVEST_RUNTIME_STATE',
-        value: state,
-        description: 'Stato completo sincronizzato DemInvest Cloud (Owner, Portafoglio, Segnali, Alert)',
-        updated_at: nowIso,
-      }),
-    });
+    // 1. Salva in public.application_settings (tabella garantita dallo schema 0001)
+    const appSettingsRes = await supabaseSmartFetch(
+      `${cfg.baseUrl}/rest/v1/application_settings`,
+      cfg.apiKey,
+      {
+        method: 'POST',
+        extraHeaders: upsertHeaders,
+        body: JSON.stringify({
+          key: 'DEMINVEST_RUNTIME_STATE',
+          value: state,
+          description:
+            'Stato completo sincronizzato DemInvest Cloud (Owner, Portafoglio, Segnali, Alert)',
+          updated_at: nowIso,
+        }),
+      }
+    );
 
-    // 2. Salva anche in public.app_state_store (se la tabella è presente)
-    await fetch(`${cfg.baseUrl}/rest/v1/app_state_store`, {
-      method: 'POST',
-      headers: restHeaders,
-      body: JSON.stringify({
-        id: 'deminvest_primary_state',
-        state_json: state,
-        updated_at: nowIso,
-      }),
-    }).catch(() => {});
+    if (appSettingsRes.ok) {
+      lastSupabaseDiagnostics.connectionStatus = 'CONNECTED';
+      lastSupabaseDiagnostics.lastError = null;
+      logStep(
+        'application_settings (DEMINVEST_RUNTIME_STATE)',
+        'OK',
+        `Stato applicativo primario salvato correttamente (HTTP ${appSettingsRes.status}).`
+      );
+    } else {
+      const errText = await appSettingsRes.text();
+      if (appSettingsRes.status === 401 || appSettingsRes.status === 403) {
+        lastSupabaseDiagnostics.connectionStatus = 'AUTH_ERROR';
+      } else if (appSettingsRes.status === 404) {
+        lastSupabaseDiagnostics.connectionStatus = 'SCHEMA_INCOMPLETE';
+      }
+      lastSupabaseDiagnostics.lastError = `HTTP ${appSettingsRes.status}: ${errText.slice(0, 180)}`;
+      logStep(
+        'application_settings (DEMINVEST_RUNTIME_STATE)',
+        'ERROR',
+        `HTTP ${appSettingsRes.status}: ${errText.slice(0, 160)}`
+      );
+    }
+
+    // 2. Salva anche in public.app_state_store (se presente)
+    const appStoreRes = await supabaseSmartFetch(
+      `${cfg.baseUrl}/rest/v1/app_state_store`,
+      cfg.apiKey,
+      {
+        method: 'POST',
+        extraHeaders: upsertHeaders,
+        body: JSON.stringify({
+          id: 'deminvest_primary_state',
+          state_json: state,
+          updated_at: nowIso,
+        }),
+      }
+    );
+    if (appStoreRes.ok) {
+      logStep('app_state_store', 'OK', 'Snapshot JSON sincronizzato.');
+    } else {
+      logStep(
+        'app_state_store',
+        'WARN',
+        `HTTP ${appStoreRes.status} (esegui migrazione 0002 se la tabella o policy non è aggiornata).`
+      );
+    }
 
     // 3. Popola i cataloghi relazionali (market_data_providers, trading_venues, assets, instruments)
-    await fetch(`${cfg.baseUrl}/rest/v1/market_data_providers`, {
+    await supabaseSmartFetch(`${cfg.baseUrl}/rest/v1/market_data_providers`, cfg.apiKey, {
       method: 'POST',
-      headers: restHeaders,
+      extraHeaders: upsertHeaders,
       body: JSON.stringify([
-        { id: 'coingecko', display_name: 'CoinGecko API v3', status: 'OPERATIONAL', has_credentials: true, supports_realtime: true, supported_asset_classes: ['CRYPTO'] },
-        { id: 'twelvedata', display_name: 'Twelve Data API', status: 'OPERATIONAL_SANDBOX', has_credentials: false, supports_realtime: true, supported_asset_classes: ['EQUITY', 'ETF', 'FOREX'] },
-        { id: 'alphavantage', display_name: 'Alpha Vantage API', status: 'OPERATIONAL_SANDBOX', has_credentials: false, supports_realtime: false, supported_asset_classes: ['EQUITY', 'ETF'] },
-        { id: 'ecb_frankfurter', display_name: 'BCE Frankfurter FX', status: 'OPERATIONAL', has_credentials: true, supports_realtime: false, supported_asset_classes: ['FOREX'] },
-        { id: 'fred', display_name: 'FRED St. Louis Fed', status: 'CONFIGURED', has_credentials: false, supports_realtime: false, supported_asset_classes: ['BOND', 'INDEX'] },
+        {
+          id: 'coingecko',
+          display_name: 'CoinGecko API v3',
+          status: 'OPERATIONAL',
+          has_credentials: true,
+          supports_realtime: true,
+          supported_asset_classes: ['CRYPTO'],
+        },
+        {
+          id: 'twelvedata',
+          display_name: 'Twelve Data API',
+          status: 'OPERATIONAL_SANDBOX',
+          has_credentials: false,
+          supports_realtime: true,
+          supported_asset_classes: ['EQUITY', 'ETF', 'FOREX'],
+        },
+        {
+          id: 'alphavantage',
+          display_name: 'Alpha Vantage API',
+          status: 'OPERATIONAL_SANDBOX',
+          has_credentials: false,
+          supports_realtime: false,
+          supported_asset_classes: ['EQUITY', 'ETF'],
+        },
+        {
+          id: 'ecb_frankfurter',
+          display_name: 'BCE Frankfurter FX',
+          status: 'OPERATIONAL',
+          has_credentials: true,
+          supports_realtime: false,
+          supported_asset_classes: ['FOREX'],
+        },
+        {
+          id: 'fred',
+          display_name: 'FRED St. Louis Fed',
+          status: 'CONFIGURED',
+          has_credentials: false,
+          supports_realtime: false,
+          supported_asset_classes: ['BOND', 'INDEX'],
+        },
       ]),
-    }).catch(() => {});
+    });
 
-    await fetch(`${cfg.baseUrl}/rest/v1/trading_venues`, {
+    await supabaseSmartFetch(`${cfg.baseUrl}/rest/v1/trading_venues`, cfg.apiKey, {
       method: 'POST',
-      headers: restHeaders,
+      extraHeaders: upsertHeaders,
       body: JSON.stringify([
-        { mic_code: 'CRYPTO_GLOBAL', name: 'Mercato Globale Spot Crypto 24/7', country_code: 'GL', timezone: 'UTC', currency: 'USD', open_time: '00:00', close_time: '23:59', is_24_7: true },
-        { mic_code: 'XNGS', name: 'NASDAQ Global Select Market', country_code: 'US', timezone: 'America/New_York', currency: 'USD', open_time: '09:30', close_time: '16:00', is_24_7: false },
-        { mic_code: 'XNYS', name: 'New York Stock Exchange (NYSE)', country_code: 'US', timezone: 'America/New_York', currency: 'USD', open_time: '09:30', close_time: '16:00', is_24_7: false },
-        { mic_code: 'XETR', name: 'Deutsche Börse Xetra', country_code: 'DE', timezone: 'Europe/Berlin', currency: 'EUR', open_time: '09:00', close_time: '17:30', is_24_7: false },
-        { mic_code: 'FX_INTERBANK', name: 'Mercato Interbancario Forex', country_code: 'GL', timezone: 'UTC', currency: 'USD', open_time: '00:00', close_time: '23:59', is_24_7: false },
+        {
+          mic_code: 'CRYPTO_GLOBAL',
+          name: 'Mercato Globale Spot Crypto 24/7',
+          country_code: 'GL',
+          timezone: 'UTC',
+          currency: 'USD',
+          open_time: '00:00',
+          close_time: '23:59',
+          is_24_7: true,
+        },
+        {
+          mic_code: 'XNGS',
+          name: 'NASDAQ Global Select Market',
+          country_code: 'US',
+          timezone: 'America/New_York',
+          currency: 'USD',
+          open_time: '09:30',
+          close_time: '16:00',
+          is_24_7: false,
+        },
+        {
+          mic_code: 'XNYS',
+          name: 'New York Stock Exchange (NYSE)',
+          country_code: 'US',
+          timezone: 'America/New_York',
+          currency: 'USD',
+          open_time: '09:30',
+          close_time: '16:00',
+          is_24_7: false,
+        },
+        {
+          mic_code: 'XETR',
+          name: 'Deutsche Börse Xetra',
+          country_code: 'DE',
+          timezone: 'Europe/Berlin',
+          currency: 'EUR',
+          open_time: '09:00',
+          close_time: '17:30',
+          is_24_7: false,
+        },
+        {
+          mic_code: 'FX_INTERBANK',
+          name: 'Mercato Interbancario Forex',
+          country_code: 'GL',
+          timezone: 'UTC',
+          currency: 'USD',
+          open_time: '00:00',
+          close_time: '23:59',
+          is_24_7: false,
+        },
       ]),
-    }).catch(() => {});
+    });
 
-    await fetch(`${cfg.baseUrl}/rest/v1/assets`, {
+    const assetsRes = await supabaseSmartFetch(`${cfg.baseUrl}/rest/v1/assets`, cfg.apiKey, {
       method: 'POST',
-      headers: restHeaders,
+      extraHeaders: upsertHeaders,
       body: JSON.stringify(
         state.assets.map((a) => ({
           id: a.id,
@@ -545,18 +922,20 @@ export async function pushStateToSupabaseIfConfigured(
           description: a.description || null,
         }))
       ),
-    }).catch(() => {});
+    });
 
-    await fetch(`${cfg.baseUrl}/rest/v1/instruments`, {
+    const instRes = await supabaseSmartFetch(`${cfg.baseUrl}/rest/v1/instruments`, cfg.apiKey, {
       method: 'POST',
-      headers: restHeaders,
+      extraHeaders: upsertHeaders,
       body: JSON.stringify(
         state.instruments.map((inst) => ({
           id: inst.id,
           underlying_asset_id: inst.underlyingAssetId,
           instrument_type: inst.instrumentType,
           ticker: inst.ticker,
-          venue_mic: ['CRYPTO_GLOBAL', 'XNGS', 'XNYS', 'XETR', 'FX_INTERBANK'].includes(inst.venueMic)
+          venue_mic: ['CRYPTO_GLOBAL', 'XNGS', 'XNYS', 'XETR', 'FX_INTERBANK'].includes(
+            inst.venueMic
+          )
             ? inst.venueMic
             : null,
           quote_currency: inst.quoteCurrency,
@@ -568,85 +947,140 @@ export async function pushStateToSupabaseIfConfigured(
           secondary_provider_symbol: inst.secondaryProviderSymbol || null,
         }))
       ),
-    }).catch(() => {});
+    });
 
-    // 4. Se l'account proprietario è registrato, sincronizza anche auth.users,
-    // public.profiles e public.user_preferences (sia con service_role sia con anon key)
+    if (assetsRes.ok && instRes.ok) {
+      logStep(
+        'Catalogo Mercati (assets & instruments)',
+        'OK',
+        `${state.assets.length} asset e ${state.instruments.length} strumenti sincronizzati.`
+      );
+    }
+
+    // 4. Sincronizzazione e riconciliazione di auth.users, profiles, user_preferences,
+    // watchlists, portfolios, portfolio_transactions e alert_rules
     if (state.ownerAccount) {
       const owner = state.ownerAccount.user;
-      const derivedPass = `DemInvest!${state.ownerAccount.passwordHash.slice(0, 18)}`;
+      const passwordToUse =
+        options?.plainPassword || `DemInvest!${state.ownerAccount.passwordHash.slice(0, 18)}`;
       let authUserId: string | null = null;
       let userAccessToken: string = cfg.apiKey;
 
       if (cfg.serviceRoleKey) {
-        const listUsersRes = await fetch(`${cfg.baseUrl}/auth/v1/admin/users`, {
-          headers: {
-            apikey: cfg.serviceRoleKey,
-            Authorization: `Bearer ${cfg.serviceRoleKey}`,
-          },
-        });
+        const listUsersRes = await supabaseSmartFetch(
+          `${cfg.baseUrl}/auth/v1/admin/users`,
+          cfg.serviceRoleKey
+        );
         if (listUsersRes.ok) {
           const listData = (await listUsersRes.json()) as {
-            users?: { id: string; email?: string }[];
+            users?: { id: string; email?: string; email_confirmed_at?: string | null }[];
           };
           const found = listData.users?.find(
             (u) => u.email?.toLowerCase() === owner.email.toLowerCase()
           );
           if (found) {
             authUserId = found.id;
+            lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
+            logStep(
+              'Supabase Auth (auth.users)',
+              'OK',
+              `Utente proprietario ${owner.email} individuato in auth.users (ID: ${authUserId}).`
+            );
+            // Se viene passata la password reale o l'email non era confermata, allinea l'account
+            if (options?.plainPassword || !found.email_confirmed_at) {
+              await supabaseSmartFetch(
+                `${cfg.baseUrl}/auth/v1/admin/users/${authUserId}`,
+                cfg.serviceRoleKey,
+                {
+                  method: 'PUT',
+                  extraHeaders: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    email_confirm: true,
+                    ...(options?.plainPassword ? { password: options.plainPassword } : {}),
+                    user_metadata: { display_name: owner.displayName, is_owner: true },
+                  }),
+                }
+              );
+            }
           }
         }
 
         if (!authUserId) {
-          const createRes = await fetch(`${cfg.baseUrl}/auth/v1/admin/users`, {
-            method: 'POST',
-            headers: {
-              apikey: cfg.serviceRoleKey,
-              Authorization: `Bearer ${cfg.serviceRoleKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              email: owner.email,
-              password: derivedPass,
-              email_confirm: true,
-              user_metadata: { display_name: owner.displayName, is_owner: true },
-            }),
-          });
+          const createRes = await supabaseSmartFetch(
+            `${cfg.baseUrl}/auth/v1/admin/users`,
+            cfg.serviceRoleKey,
+            {
+              method: 'POST',
+              extraHeaders: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: owner.email,
+                password: passwordToUse,
+                email_confirm: true,
+                user_metadata: { display_name: owner.displayName, is_owner: true },
+              }),
+            }
+          );
           if (createRes.ok) {
             const created = (await createRes.json()) as { id?: string };
-            if (created.id) authUserId = created.id;
+            if (created.id) {
+              authUserId = created.id;
+              lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
+              logStep(
+                'Supabase Auth (auth.users)',
+                'OK',
+                `Account proprietario ${owner.email} creato e confermato in auth.users.`
+              );
+            }
+          } else {
+            const errTxt = await createRes.text();
+            logStep(
+              'Supabase Auth (auth.users)',
+              'WARN',
+              `Creazione admin non completata (HTTP ${createRes.status}): ${errTxt.slice(0, 120)}`
+            );
           }
         }
       } else {
-        // Fallback tramite endpoint pubblico Auth con anon key
-        const loginRes = await fetch(`${cfg.baseUrl}/auth/v1/token?grant_type=password`, {
-          method: 'POST',
-          headers: {
-            apikey: cfg.apiKey,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ email: owner.email, password: derivedPass }),
-        });
+        // Flusso con chiave pubblica (anon / publishable)
+        const loginRes = await supabaseSmartFetch(
+          `${cfg.baseUrl}/auth/v1/token?grant_type=password`,
+          cfg.apiKey,
+          {
+            method: 'POST',
+            extraHeaders: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: owner.email, password: passwordToUse }),
+          }
+        );
         if (loginRes.ok) {
           const data = (await loginRes.json()) as {
             access_token?: string;
             user?: { id?: string };
           };
           if (data.user?.id) authUserId = data.user.id;
-          if (data.access_token) userAccessToken = data.access_token;
+          if (data.access_token) {
+            userAccessToken = data.access_token;
+            cachedSupabaseUserAccessToken = data.access_token;
+          }
+          lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
+          logStep(
+            'Supabase Auth (Sign-In)',
+            'OK',
+            `Sessione autenticata per ${owner.email} su Supabase Auth.`
+          );
         } else {
-          const signupRes = await fetch(`${cfg.baseUrl}/auth/v1/signup`, {
-            method: 'POST',
-            headers: {
-              apikey: cfg.apiKey,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              email: owner.email,
-              password: derivedPass,
-              data: { display_name: owner.displayName, is_owner: true },
-            }),
-          });
+          const signupRes = await supabaseSmartFetch(
+            `${cfg.baseUrl}/auth/v1/signup`,
+            cfg.apiKey,
+            {
+              method: 'POST',
+              extraHeaders: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: owner.email,
+                password: passwordToUse,
+                data: { display_name: owner.displayName, is_owner: true },
+              }),
+            }
+          );
           if (signupRes.ok) {
             const sData = (await signupRes.json()) as {
               id?: string;
@@ -654,89 +1088,399 @@ export async function pushStateToSupabaseIfConfigured(
               user?: { id?: string };
             };
             authUserId = sData.user?.id || sData.id || null;
-            if (sData.access_token) userAccessToken = sData.access_token;
+            if (sData.access_token) {
+              userAccessToken = sData.access_token;
+              cachedSupabaseUserAccessToken = sData.access_token;
+              lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
+              logStep(
+                'Supabase Auth (Sign-Up)',
+                'OK',
+                `Utente ${owner.email} registrato in auth.users.`
+              );
+            } else {
+              lastSupabaseDiagnostics.authUserStatus = 'EMAIL_UNCONFIRMED';
+              logStep(
+                'Supabase Auth (Sign-Up)',
+                'WARN',
+                `Utente registrato in auth.users, ma conferma email attiva su Supabase (esegui migrazione 0002 o configura SUPABASE_SERVICE_ROLE_KEY per bypassare la conferma).`
+              );
+            }
+          } else {
+            const sErr = await signupRes.text();
+            logStep(
+              'Supabase Auth (Sign-Up)',
+              'WARN',
+              `Risposta Auth HTTP ${signupRes.status}: ${sErr.slice(0, 120)}`
+            );
           }
         }
       }
 
       if (authUserId) {
-        const authRestHeaders = {
-          apikey: cfg.apiKey,
-          Authorization: `Bearer ${userAccessToken}`,
-          'Content-Type': 'application/json',
-          Prefer: 'resolution=merge-duplicates',
-        };
+        // Aggiorna l'ID locale dell'owner con il vero UUID di Supabase Auth
+        state.ownerAccount.user.id = authUserId;
 
-        // Verifica se il profilo esiste già per evitare il trigger BEFORE INSERT su update
-        const checkProf = await fetch(
+        // 4A. Riconciliazione public.profiles
+        const checkProf = await supabaseSmartFetch(
           `${cfg.baseUrl}/rest/v1/profiles?id=eq.${authUserId}&select=id`,
-          {
-            headers: {
-              apikey: cfg.apiKey,
-              Authorization: `Bearer ${userAccessToken}`,
-            },
-          }
+          cfg.apiKey,
+          { bearerToken: userAccessToken }
         );
         const existingRows = checkProf.ok ? ((await checkProf.json()) as { id: string }[]) : [];
 
         if (Array.isArray(existingRows) && existingRows.length > 0) {
-          await fetch(`${cfg.baseUrl}/rest/v1/profiles?id=eq.${authUserId}`, {
-            method: 'PATCH',
-            headers: {
-              apikey: cfg.apiKey,
-              Authorization: `Bearer ${userAccessToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              display_name: owner.displayName,
-              onboarding_completed: owner.onboardingCompleted,
-              updated_at: nowIso,
-            }),
-          }).catch(() => {});
+          const patchRes = await supabaseSmartFetch(
+            `${cfg.baseUrl}/rest/v1/profiles?id=eq.${authUserId}`,
+            cfg.apiKey,
+            {
+              method: 'PATCH',
+              bearerToken: userAccessToken,
+              extraHeaders: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                display_name: owner.displayName,
+                onboarding_completed: owner.onboardingCompleted,
+                updated_at: nowIso,
+              }),
+            }
+          );
+          if (patchRes.ok) {
+            lastSupabaseDiagnostics.profileStatus = 'PRESENT_IN_PROFILES';
+            logStep('Tabella public.profiles', 'OK', 'Profilo proprietario aggiornato.');
+          }
         } else {
-          await fetch(`${cfg.baseUrl}/rest/v1/profiles`, {
-            method: 'POST',
-            headers: {
-              apikey: cfg.apiKey,
-              Authorization: `Bearer ${userAccessToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              id: authUserId,
-              email: owner.email,
-              display_name: owner.displayName,
-              is_owner: true,
-              onboarding_completed: owner.onboardingCompleted,
-              updated_at: nowIso,
-            }),
-          }).catch(() => {});
+          const postProfRes = await supabaseSmartFetch(
+            `${cfg.baseUrl}/rest/v1/profiles`,
+            cfg.apiKey,
+            {
+              method: 'POST',
+              bearerToken: userAccessToken,
+              extraHeaders: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: authUserId,
+                email: owner.email,
+                display_name: owner.displayName,
+                is_owner: true,
+                onboarding_completed: owner.onboardingCompleted,
+                updated_at: nowIso,
+              }),
+            }
+          );
+          if (postProfRes.ok) {
+            lastSupabaseDiagnostics.profileStatus = 'RECONCILED';
+            logStep(
+              'Tabella public.profiles',
+              'OK',
+              `Profilo proprietario creato e riconciliato per ${owner.email}.`
+            );
+          } else {
+            const pErr = await postProfRes.text();
+            lastSupabaseDiagnostics.profileStatus = 'MISSING_IN_PROFILES';
+            logStep(
+              'Tabella public.profiles',
+              'ERROR',
+              `Impossibile creare riga in profiles (HTTP ${postProfRes.status}): ${pErr.slice(0, 140)}`
+            );
+          }
         }
 
-        await fetch(`${cfg.baseUrl}/rest/v1/user_preferences`, {
-          method: 'POST',
-          headers: authRestHeaders,
-          body: JSON.stringify({
-            user_id: authUserId,
-            ui_mode: owner.uiMode,
-            theme: owner.theme,
-            preferred_currency: owner.preferredCurrency,
-            timezone: owner.timezone,
-            experience_level: owner.experienceLevel,
-            risk_tolerance: owner.riskTolerance,
-            investment_goals: owner.investmentGoals,
-            preferred_horizons: owner.preferredHorizons,
-            preferred_markets: owner.preferredMarkets,
-            quiet_hours_start: owner.quietHoursStart,
-            quiet_hours_end: owner.quietHoursEnd,
-            max_daily_notifications: owner.maxDailyNotifications,
-            updated_at: nowIso,
-          }),
-        }).catch(() => {});
+        // 4B. Riconciliazione public.user_preferences
+        const prefRes = await supabaseSmartFetch(
+          `${cfg.baseUrl}/rest/v1/user_preferences`,
+          cfg.apiKey,
+          {
+            method: 'POST',
+            bearerToken: userAccessToken,
+            extraHeaders: upsertHeaders,
+            body: JSON.stringify({
+              user_id: authUserId,
+              ui_mode: owner.uiMode,
+              theme: owner.theme,
+              preferred_currency: owner.preferredCurrency,
+              timezone: owner.timezone,
+              experience_level: owner.experienceLevel,
+              risk_tolerance: owner.riskTolerance,
+              investment_goals: owner.investmentGoals,
+              preferred_horizons: owner.preferredHorizons,
+              preferred_markets: owner.preferredMarkets,
+              quiet_hours_start: owner.quietHoursStart,
+              quiet_hours_end: owner.quietHoursEnd,
+              max_daily_notifications: owner.maxDailyNotifications,
+              updated_at: nowIso,
+            }),
+          }
+        );
+        if (prefRes.ok) {
+          logStep('Tabella public.user_preferences', 'OK', 'Preferenze utente sincronizzate.');
+        }
+
+        // 4C. Riconciliazione public.user_brokers
+        if (owner.selectedBrokers.length > 0) {
+          await supabaseSmartFetch(
+            `${cfg.baseUrl}/rest/v1/user_brokers?on_conflict=user_id,broker_code`,
+            cfg.apiKey,
+            {
+              method: 'POST',
+              bearerToken: userAccessToken,
+              extraHeaders: upsertHeaders,
+              body: JSON.stringify(
+                owner.selectedBrokers.map((code) => ({
+                  user_id: authUserId,
+                  broker_code: code,
+                  broker_name: code.replace('_', ' '),
+                  platform_type: code === 'MT4' || code === 'MT5' ? 'TERMINAL' : 'BROKER',
+                  default_currency: owner.preferredCurrency,
+                  is_active: true,
+                }))
+              ),
+            }
+          );
+        }
+
+        // 4D. Riconciliazione public.watchlists & watchlist_items
+        const wlCheck = await supabaseSmartFetch(
+          `${cfg.baseUrl}/rest/v1/watchlists?user_id=eq.${authUserId}&select=id&limit=1`,
+          cfg.apiKey,
+          { bearerToken: userAccessToken }
+        );
+        let watchlistId: string | null = null;
+        if (wlCheck.ok) {
+          const wlRows = (await wlCheck.json()) as { id: string }[];
+          if (wlRows[0]?.id) watchlistId = wlRows[0].id;
+        }
+        if (!watchlistId) {
+          const createWl = await supabaseSmartFetch(
+            `${cfg.baseUrl}/rest/v1/watchlists`,
+            cfg.apiKey,
+            {
+              method: 'POST',
+              bearerToken: userAccessToken,
+              extraHeaders: {
+                'Content-Type': 'application/json',
+                Prefer: 'return=representation',
+              },
+              body: JSON.stringify({
+                user_id: authUserId,
+                name: 'Watchlist Principale',
+                is_default: true,
+              }),
+            }
+          );
+          if (createWl.ok) {
+            const createdWl = (await createWl.json()) as { id: string }[];
+            if (createdWl[0]?.id) watchlistId = createdWl[0].id;
+          }
+        }
+        if (watchlistId && state.watchlistInstrumentIds.length > 0) {
+          const wlItemsRes = await supabaseSmartFetch(
+            `${cfg.baseUrl}/rest/v1/watchlist_items?on_conflict=watchlist_id,instrument_id`,
+            cfg.apiKey,
+            {
+              method: 'POST',
+              bearerToken: userAccessToken,
+              extraHeaders: upsertHeaders,
+              body: JSON.stringify(
+                state.watchlistInstrumentIds.map((instId, idx) => ({
+                  watchlist_id: watchlistId,
+                  instrument_id: instId,
+                  preferred_horizon: 'BREVE',
+                  preferred_broker_code: owner.selectedBrokers[0] || 'TRADE_REPUBLIC',
+                  notes: `Strumento monitorato #${idx + 1}`,
+                }))
+              ),
+            }
+          );
+          if (wlItemsRes.ok) {
+            logStep(
+              'Tabelle public.watchlists & watchlist_items',
+              'OK',
+              `${state.watchlistInstrumentIds.length} strumenti salvati nella watchlist su Supabase.`
+            );
+          }
+        }
+
+        // 4E. Riconciliazione public.portfolios & portfolio_transactions
+        const pfCheck = await supabaseSmartFetch(
+          `${cfg.baseUrl}/rest/v1/portfolios?user_id=eq.${authUserId}&select=id&limit=1`,
+          cfg.apiKey,
+          { bearerToken: userAccessToken }
+        );
+        let portfolioId: string | null = null;
+        if (pfCheck.ok) {
+          const pfRows = (await pfCheck.json()) as { id: string }[];
+          if (pfRows[0]?.id) portfolioId = pfRows[0].id;
+        }
+        if (!portfolioId) {
+          const createPf = await supabaseSmartFetch(
+            `${cfg.baseUrl}/rest/v1/portfolios`,
+            cfg.apiKey,
+            {
+              method: 'POST',
+              bearerToken: userAccessToken,
+              extraHeaders: {
+                'Content-Type': 'application/json',
+                Prefer: 'return=representation',
+              },
+              body: JSON.stringify({
+                user_id: authUserId,
+                name: 'Portafoglio Personale DemInvest',
+                base_currency: owner.preferredCurrency,
+                cash_balance: 15000,
+              }),
+            }
+          );
+          if (createPf.ok) {
+            const createdPf = (await createPf.json()) as { id: string }[];
+            if (createdPf[0]?.id) portfolioId = createdPf[0].id;
+          }
+        }
+        if (portfolioId) {
+          logStep('Tabella public.portfolios', 'OK', `Portafoglio attivo (ID: ${portfolioId}).`);
+          // Sincronizza le transazioni di portafoglio se la tabella relazionale è vuota
+          const txCheck = await supabaseSmartFetch(
+            `${cfg.baseUrl}/rest/v1/portfolio_transactions?portfolio_id=eq.${portfolioId}&select=id`,
+            cfg.apiKey,
+            { bearerToken: userAccessToken }
+          );
+          const existingTx = txCheck.ok ? ((await txCheck.json()) as { id: string }[]) : [];
+          if (
+            Array.isArray(existingTx) &&
+            existingTx.length < state.portfolioTransactions.length
+          ) {
+            const missingCount = state.portfolioTransactions.length - existingTx.length;
+            const toInsert = state.portfolioTransactions.slice(0, missingCount).map((tx) => ({
+              portfolio_id: portfolioId,
+              instrument_id: tx.instrumentId || null,
+              transaction_type: tx.transactionType,
+              quantity: tx.quantity,
+              unit_price: tx.unitPrice,
+              fees: tx.fees,
+              currency: tx.currency,
+              fx_rate_to_base: tx.fxRateToBase,
+              fx_source: tx.fxSource,
+              fx_observed_at: tx.fxObservedAt,
+              declared_broker_code: tx.declaredBrokerCode || null,
+              executed_at: tx.executedAt,
+              notes: tx.notes || null,
+            }));
+            await supabaseSmartFetch(`${cfg.baseUrl}/rest/v1/portfolio_transactions`, cfg.apiKey, {
+              method: 'POST',
+              bearerToken: userAccessToken,
+              extraHeaders: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(toInsert),
+            });
+          }
+        }
+
+        // 4F. Riconciliazione public.alert_rules
+        const arCheck = await supabaseSmartFetch(
+          `${cfg.baseUrl}/rest/v1/alert_rules?user_id=eq.${authUserId}&select=id`,
+          cfg.apiKey,
+          { bearerToken: userAccessToken }
+        );
+        const existingAr = arCheck.ok ? ((await arCheck.json()) as { id: string }[]) : [];
+        if (Array.isArray(existingAr) && existingAr.length < state.alertRules.length) {
+          const missingAlerts = state.alertRules.slice(0, state.alertRules.length - existingAr.length);
+          await supabaseSmartFetch(`${cfg.baseUrl}/rest/v1/alert_rules`, cfg.apiKey, {
+            method: 'POST',
+            bearerToken: userAccessToken,
+            extraHeaders: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(
+              missingAlerts.map((r) => ({
+                user_id: authUserId,
+                instrument_id: r.instrumentId,
+                broker_code: r.brokerCode || null,
+                rule_type: r.ruleType,
+                horizon: r.horizon,
+                threshold_value: r.thresholdValue,
+                priority: r.priority,
+                cooldown_minutes: r.cooldownMinutes,
+                is_active: r.isActive,
+              }))
+            ),
+          });
+        }
+
+        // 4G. Riconciliazione public.paper_accounts
+        const paCheck = await supabaseSmartFetch(
+          `${cfg.baseUrl}/rest/v1/paper_accounts?user_id=eq.${authUserId}&select=id&limit=1`,
+          cfg.apiKey,
+          { bearerToken: userAccessToken }
+        );
+        if (paCheck.ok) {
+          const paRows = (await paCheck.json()) as { id: string }[];
+          if (!paRows[0]?.id) {
+            await supabaseSmartFetch(`${cfg.baseUrl}/rest/v1/paper_accounts`, cfg.apiKey, {
+              method: 'POST',
+              bearerToken: userAccessToken,
+              extraHeaders: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                user_id: authUserId,
+                name: state.paperAccount.name,
+                base_currency: state.paperAccount.baseCurrency,
+                initial_capital: state.paperAccount.initialCapital,
+                cash_balance: state.paperAccount.cashBalance,
+              }),
+            });
+          }
+        }
       }
     }
-  } catch {
-    // Ignora errori transitori di rete verso Supabase REST
+
+    // 5. Lettura conteggi righe reali su Supabase per diagnostica verificabile
+    const activeCountBearer =
+      cfg.serviceRoleKey || cachedSupabaseUserAccessToken || cfg.apiKey;
+    const countTable = async (table: string): Promise<number> => {
+      const r = await supabaseSmartFetch(
+        `${cfg.baseUrl}/rest/v1/${table}?select=*`,
+        cfg.apiKey,
+        { bearerToken: activeCountBearer, extraHeaders: { Prefer: 'count=exact' } }
+      );
+      if (!r.ok) return 0;
+      const rows = (await r.json()) as unknown[];
+      return Array.isArray(rows) ? rows.length : 0;
+    };
+
+    const [
+      cProfiles,
+      cPrefs,
+      cWatchlists,
+      cPortfolios,
+      cTx,
+      cAlerts,
+      cInstruments,
+      cSettings,
+    ] = await Promise.all([
+      countTable('profiles'),
+      countTable('user_preferences'),
+      countTable('watchlists'),
+      countTable('portfolios'),
+      countTable('portfolio_transactions'),
+      countTable('alert_rules'),
+      countTable('instruments'),
+      countTable('application_settings'),
+    ]);
+
+    lastSupabaseDiagnostics.remoteTableCounts = {
+      profiles: cProfiles,
+      user_preferences: cPrefs,
+      watchlists: cWatchlists,
+      portfolios: cPortfolios,
+      portfolio_transactions: cTx,
+      alert_rules: cAlerts,
+      instruments: cInstruments,
+      application_settings: cSettings,
+    };
+    lastSupabaseDiagnostics.lastSyncAt = nowIso;
+    lastSupabaseDiagnostics.syncStepsLog = stepsLog;
+  } catch (err) {
+    lastSupabaseDiagnostics.connectionStatus = 'NETWORK_ERROR';
+    lastSupabaseDiagnostics.lastError =
+      err instanceof Error ? err.message : 'Errore di rete durante la sincronizzazione Supabase';
+    logStep('Eccezione Rete Supabase', 'ERROR', lastSupabaseDiagnostics.lastError);
+    lastSupabaseDiagnostics.syncStepsLog = stepsLog;
   }
+
+  return getSupabaseDiagnosticsSnapshot();
 }
 
 // ------------------------------------------------------------------------------

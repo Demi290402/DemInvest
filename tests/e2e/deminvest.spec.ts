@@ -59,7 +59,13 @@ test.describe('DemInvest — Flusso End-to-End Completo (Release 1 MVP Reale)', 
     await page.getByTestId('send-test-push-btn').click();
     await expect(page.getByText(/Test Reale Notifica Web Push/i).first()).toBeVisible();
 
-    // 10. Apertura Assistente DemInvest AI e verifica tool-calling e guardrail
+    // 10. Navigazione a Impostazioni e verifica Diagnostica & Riconciliazione Supabase Cloud
+    await page.getByTestId('nav-settings').click();
+    await expect(page.getByTestId('supabase-diagnostics-panel')).toBeVisible();
+    await expect(page.getByTestId('reconcile-supabase-btn')).toBeVisible();
+    await page.getByTestId('reconcile-supabase-btn').click();
+
+    // 11. Apertura Assistente DemInvest AI e verifica tool-calling e guardrail
     await page.getByTestId('header-ai-btn').click();
     await expect(page.getByText(/DemInvest AI — Analista Contestuale/i)).toBeVisible();
     await page.getByTestId('ai-chat-input').fill('Analizza BTC/USD e il rischio');
@@ -67,3 +73,4 @@ test.describe('DemInvest — Flusso End-to-End Completo (Release 1 MVP Reale)', 
     await expect(page.getByText(/1. Dati Verificati/i).first()).toBeVisible();
   });
 });
+

@@ -14,7 +14,10 @@ import {
   getMarketQuoteForInstrument,
   getOrInitVapidKeys,
   getProvidersHealthDashboard,
+  getSupabaseDiagnosticsSnapshot,
   processContextualAiChat,
+  pullStateFromSupabaseIfConfigured,
+  pushStateToSupabaseIfConfigured,
   registerCoinGeckoInstrumentInCatalog,
   runBackendSchedulerCycle,
   saveDbState,
@@ -108,10 +111,14 @@ export function demInvestBackendPlugin(): Plugin {
     const method = req.method || 'GET';
 
     try {
+      await pullStateFromSupabaseIfConfigured();
       const db = getDbState();
 
       // 1. BOOTSTRAP STATO APPLICAZIONE
       if (pathname === '/api/bootstrap' && method === 'GET') {
+        if (db.ownerAccount) {
+          await pushStateToSupabaseIfConfigured(db);
+        }
         const vapid = getOrInitVapidKeys();
         const isAuthenticated = Boolean(
           db.ownerAccount && db.activeSessionToken
@@ -135,6 +142,7 @@ export function demInvestBackendPlugin(): Plugin {
           aiToolLogs: db.aiToolLogs,
           schedulerStatus: db.schedulerStatus,
           providersHealth: getProvidersHealthDashboard(),
+          supabaseDiagnostics: getSupabaseDiagnosticsSnapshot(),
           vapidPublicKey: vapid.publicKey,
         });
       }
@@ -187,10 +195,14 @@ export function demInvestBackendPlugin(): Plugin {
         };
         db.activeSessionToken = token;
         saveDbState(db);
+        const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(db, {
+          plainPassword: password,
+        });
 
         return sendJson(res, 200, {
           user: db.ownerAccount.user,
           sessionToken: token,
+          supabaseDiagnostics,
         });
       }
 
@@ -200,27 +212,45 @@ export function demInvestBackendPlugin(): Plugin {
         const password = String(body.password || '');
 
         if (!db.ownerAccount) {
+          await pullStateFromSupabaseIfConfigured(true);
+        }
+
+        if (!db.ownerAccount) {
           return sendJson(res, 404, {
             error: 'Nessun account proprietario registrato. Esegui la registrazione iniziale.',
           });
         }
 
+        const pwdHash = hashPassword(password);
+        const isSupabaseManagedOwner =
+          db.ownerAccount.user.email === email &&
+          db.ownerAccount.passwordHash === 'SUPABASE_AUTH_MANAGED' &&
+          password.length >= 8;
+
         if (
           db.ownerAccount.user.email !== email ||
-          db.ownerAccount.passwordHash !== hashPassword(password)
+          (!isSupabaseManagedOwner && db.ownerAccount.passwordHash !== pwdHash)
         ) {
           return sendJson(res, 401, {
             error: 'Credenziali non valide. Verifica email e password del proprietario.',
           });
         }
 
+        if (isSupabaseManagedOwner) {
+          db.ownerAccount.passwordHash = pwdHash;
+        }
+
         const token = crypto.randomBytes(24).toString('hex');
         db.activeSessionToken = token;
         saveDbState(db);
+        const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(db, {
+          plainPassword: password,
+        });
 
         return sendJson(res, 200, {
           user: db.ownerAccount.user,
           sessionToken: token,
+          supabaseDiagnostics,
         });
       }
 
@@ -240,7 +270,8 @@ export function demInvestBackendPlugin(): Plugin {
           ...(body as Partial<typeof db.ownerAccount.user>),
         };
         saveDbState(db);
-        return sendJson(res, 200, { user: db.ownerAccount.user });
+        const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(db);
+        return sendJson(res, 200, { user: db.ownerAccount.user, supabaseDiagnostics });
       }
 
       // 3. MARKET DATA & QUANTITATIVE SNAPSHOT
@@ -707,7 +738,7 @@ export function demInvestBackendPlugin(): Plugin {
         });
       }
 
-      // 11. CONFIGURAZIONE SEGRETI PROVIDER BACKEND-ONLY
+      // 11. CONFIGURAZIONE SEGRETI PROVIDER BACKEND-ONLY & SUPABASE
       if (pathname === '/api/settings/provider-key' && method === 'POST') {
         const body = await readJsonBody(req);
         const providerKeyName = String(body.keyName || '') as
@@ -715,21 +746,48 @@ export function demInvestBackendPlugin(): Plugin {
           | 'TWELVE_DATA_API_KEY'
           | 'ALPHA_VANTAGE_API_KEY'
           | 'FRED_API_KEY'
-          | 'GEMINI_API_KEY';
+          | 'GEMINI_API_KEY'
+          | 'SUPABASE_URL'
+          | 'SUPABASE_ANON_KEY'
+          | 'SUPABASE_SERVICE_ROLE_KEY';
         const allowedKeys = [
           'COINGECKO_API_KEY',
           'TWELVE_DATA_API_KEY',
           'ALPHA_VANTAGE_API_KEY',
           'FRED_API_KEY',
           'GEMINI_API_KEY',
+          'SUPABASE_URL',
+          'SUPABASE_ANON_KEY',
+          'SUPABASE_SERVICE_ROLE_KEY',
         ];
         if (!allowedKeys.includes(providerKeyName)) {
           return sendJson(res, 400, { error: 'Nome variabile provider non riconosciuto.' });
         }
         saveRuntimeSecret(providerKeyName, String(body.secretValue || ''));
+        if (providerKeyName.startsWith('SUPABASE_')) {
+          await pullStateFromSupabaseIfConfigured(true);
+          await pushStateToSupabaseIfConfigured(getDbState());
+        }
         return sendJson(res, 200, {
           ok: true,
           providersHealth: getProvidersHealthDashboard(),
+          supabaseDiagnostics: getSupabaseDiagnosticsSnapshot(),
+        });
+      }
+
+      // 12. DIAGNOSTICA E RICONCILIAZIONE SUPABASE CLOUD
+      if (pathname === '/api/supabase/reconcile' && method === 'POST') {
+        const body = await readJsonBody(req);
+        const plainPassword = body.password ? String(body.password) : undefined;
+        await pullStateFromSupabaseIfConfigured(true);
+        const currentDb = getDbState();
+        const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(currentDb, {
+          plainPassword,
+        });
+        return sendJson(res, 200, {
+          ok: true,
+          supabaseDiagnostics,
+          user: currentDb.ownerAccount?.user || null,
         });
       }
 

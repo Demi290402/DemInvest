@@ -6,10 +6,13 @@ import { describe, expect, it } from 'vitest';
 import '../server/nodePlatformBridge';
 import {
   dispatchNotificationAndWebPush,
+  getDbState,
   getMarketQuoteForInstrument,
   getOrInitVapidKeys,
   getProvidersHealthDashboard,
+  getSupabaseDiagnosticsSnapshot,
   processContextualAiChat,
+  pushStateToSupabaseIfConfigured,
   registerCoinGeckoInstrumentInCatalog,
   runBackendSchedulerCycle,
   sanitizeUserPromptAndGuardOrders,
@@ -89,4 +92,15 @@ describe('DemInvest — Integrazione Backend, Provider, Sicurezza e AI Guardrail
     const schedulerInfo = await runBackendSchedulerCycle('DEMO');
     expect(schedulerInfo.recentRuns.length).toBeGreaterThan(0);
   });
+
+  it('6. Fornisce diagnostica trasparente e non silenziosa per la sincronizzazione Supabase Cloud', async () => {
+    const diagBefore = getSupabaseDiagnosticsSnapshot();
+    expect(diagBefore.configuredUrl).toContain('supabase.co');
+    expect(diagBefore.remoteTableCounts).toBeDefined();
+
+    const diagAfter = await pushStateToSupabaseIfConfigured(getDbState());
+    expect(Array.isArray(diagAfter.syncStepsLog)).toBe(true);
+    expect(diagAfter.syncStepsLog.length).toBeGreaterThan(0);
+  });
 });
+

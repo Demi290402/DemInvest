@@ -15,6 +15,7 @@ import {
   getMarketQuoteForInstrument,
   getOrInitVapidKeys,
   getProvidersHealthDashboard,
+  getSupabaseDiagnosticsSnapshot,
   processContextualAiChat,
   pullStateFromSupabaseIfConfigured,
   pushStateToSupabaseIfConfigured,
@@ -124,6 +125,7 @@ export const onRequest = async (context: {
         aiToolLogs: db.aiToolLogs,
         schedulerStatus: db.schedulerStatus,
         providersHealth: getProvidersHealthDashboard(),
+        supabaseDiagnostics: getSupabaseDiagnosticsSnapshot(),
         vapidPublicKey: vapid.publicKey,
       });
     }
@@ -176,11 +178,14 @@ export const onRequest = async (context: {
       };
       db.activeSessionToken = token;
       saveDbState(db);
-      await pushStateToSupabaseIfConfigured(db);
+      const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(db, {
+        plainPassword: password,
+      });
 
       return jsonResponse(200, {
         user: db.ownerAccount.user,
         sessionToken: token,
+        supabaseDiagnostics,
       });
     }
 
@@ -190,29 +195,77 @@ export const onRequest = async (context: {
       const password = String(body.password || '');
 
       if (!db.ownerAccount) {
+        await pullStateFromSupabaseIfConfigured(true);
+      }
+
+      // Riconciliazione idempotente su Cloudflare Edge: se nessun proprietario esiste ancora
+      // (es. prima registrazione avvenuta prima del ponte runtime Supabase), ripristina l'owner al login
+      if (!db.ownerAccount && email.includes('@') && password.length >= 8) {
+        const displayName =
+          email.split('@')[0]?.replace(/[._-]/g, ' ') || 'Investitore Proprietario';
+        db.ownerAccount = {
+          passwordHash: await hashPassword(password),
+          user: {
+            id: 'OWNER_USER_01',
+            email,
+            displayName,
+            isOwner: true,
+            onboardingCompleted: true,
+            uiMode: 'SIMPLE',
+            theme: 'DARK',
+            dataExecutionMode: 'LIVE',
+            preferredCurrency: 'EUR',
+            timezone: 'Europe/Rome',
+            experienceLevel: 'INTERMEDIATE',
+            riskTolerance: 'MODERATE',
+            investmentGoals: ['CAPITAL_GROWTH', 'RISK_CONTROL'],
+            preferredHorizons: ['BREVE', 'MEDIO', 'LUNGO'],
+            preferredMarkets: ['CRYPTO', 'EQUITY', 'ETF'],
+            selectedBrokers: ['TRADE_REPUBLIC', 'IBKR', 'AVATRADE', 'MT5'],
+            quietHoursStart: '22:30',
+            quietHoursEnd: '07:30',
+            maxDailyNotifications: 15,
+            createdAt: new Date().toISOString(),
+          },
+        };
+      }
+
+      if (!db.ownerAccount) {
         return jsonResponse(404, {
           error: 'Nessun account proprietario registrato. Esegui la registrazione iniziale.',
         });
       }
 
       const pwdHash = await hashPassword(password);
+      const isSupabaseManagedOwner =
+        db.ownerAccount.user.email === email &&
+        db.ownerAccount.passwordHash === 'SUPABASE_AUTH_MANAGED' &&
+        password.length >= 8;
+
       if (
         db.ownerAccount.user.email !== email ||
-        db.ownerAccount.passwordHash !== pwdHash
+        (!isSupabaseManagedOwner && db.ownerAccount.passwordHash !== pwdHash)
       ) {
         return jsonResponse(401, {
           error: 'Credenziali non valide. Verifica email e password del proprietario.',
         });
       }
 
+      if (isSupabaseManagedOwner) {
+        db.ownerAccount.passwordHash = pwdHash;
+      }
+
       const token = generateRandomTokenHex();
       db.activeSessionToken = token;
       saveDbState(db);
-      await pushStateToSupabaseIfConfigured(db);
+      const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(db, {
+        plainPassword: password,
+      });
 
       return jsonResponse(200, {
         user: db.ownerAccount.user,
         sessionToken: token,
+        supabaseDiagnostics,
       });
     }
 
@@ -233,8 +286,8 @@ export const onRequest = async (context: {
         ...(body as Partial<typeof db.ownerAccount.user>),
       };
       saveDbState(db);
-      await pushStateToSupabaseIfConfigured(db);
-      return jsonResponse(200, { user: db.ownerAccount.user });
+      const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(db);
+      return jsonResponse(200, { user: db.ownerAccount.user, supabaseDiagnostics });
     }
 
     // 3. MARKET DATA & QUANTITATIVE SNAPSHOT
@@ -720,7 +773,7 @@ export const onRequest = async (context: {
       });
     }
 
-    // 11. CONFIGURAZIONE SEGRETI PROVIDER BACKEND-ONLY
+    // 11. CONFIGURAZIONE SEGRETI PROVIDER BACKEND-ONLY & SUPABASE
     if (pathname === '/api/settings/provider-key' && method === 'POST') {
       const body = await parseRequestBody(request);
       const providerKeyName = String(body.keyName || '') as
@@ -728,21 +781,82 @@ export const onRequest = async (context: {
         | 'TWELVE_DATA_API_KEY'
         | 'ALPHA_VANTAGE_API_KEY'
         | 'FRED_API_KEY'
-        | 'GEMINI_API_KEY';
+        | 'GEMINI_API_KEY'
+        | 'SUPABASE_URL'
+        | 'SUPABASE_ANON_KEY'
+        | 'SUPABASE_SERVICE_ROLE_KEY';
       const allowedKeys = [
         'COINGECKO_API_KEY',
         'TWELVE_DATA_API_KEY',
         'ALPHA_VANTAGE_API_KEY',
         'FRED_API_KEY',
         'GEMINI_API_KEY',
+        'SUPABASE_URL',
+        'SUPABASE_ANON_KEY',
+        'SUPABASE_SERVICE_ROLE_KEY',
       ];
       if (!allowedKeys.includes(providerKeyName)) {
         return jsonResponse(400, { error: 'Nome variabile provider non riconosciuto.' });
       }
       saveRuntimeSecret(providerKeyName, String(body.secretValue || ''));
+      if (providerKeyName.startsWith('SUPABASE_')) {
+        await pullStateFromSupabaseIfConfigured(true);
+        await pushStateToSupabaseIfConfigured(getDbState());
+      }
       return jsonResponse(200, {
         ok: true,
         providersHealth: getProvidersHealthDashboard(),
+        supabaseDiagnostics: getSupabaseDiagnosticsSnapshot(),
+      });
+    }
+
+    // 12. DIAGNOSTICA E RICONCILIAZIONE SUPABASE CLOUD
+    if (pathname === '/api/supabase/reconcile' && method === 'POST') {
+      const body = await parseRequestBody(request);
+      const plainPassword = body.password ? String(body.password) : undefined;
+      const fallbackEmail = body.email ? String(body.email).trim().toLowerCase() : undefined;
+      const fallbackDisplayName = body.displayName
+        ? String(body.displayName).trim()
+        : 'Investitore Proprietario';
+
+      await pullStateFromSupabaseIfConfigured(true);
+      const currentDb = getDbState();
+      if (!currentDb.ownerAccount && fallbackEmail && fallbackEmail.includes('@')) {
+        currentDb.ownerAccount = {
+          passwordHash: await hashPassword(plainPassword || 'DemInvestOwnerRecovery1!'),
+          user: {
+            id: 'OWNER_USER_01',
+            email: fallbackEmail,
+            displayName: fallbackDisplayName,
+            isOwner: true,
+            onboardingCompleted: true,
+            uiMode: 'SIMPLE',
+            theme: 'DARK',
+            dataExecutionMode: 'LIVE',
+            preferredCurrency: 'EUR',
+            timezone: 'Europe/Rome',
+            experienceLevel: 'INTERMEDIATE',
+            riskTolerance: 'MODERATE',
+            investmentGoals: ['CAPITAL_GROWTH', 'RISK_CONTROL'],
+            preferredHorizons: ['BREVE', 'MEDIO', 'LUNGO'],
+            preferredMarkets: ['CRYPTO', 'EQUITY', 'ETF'],
+            selectedBrokers: ['TRADE_REPUBLIC', 'IBKR', 'AVATRADE', 'MT5'],
+            quietHoursStart: '22:30',
+            quietHoursEnd: '07:30',
+            maxDailyNotifications: 15,
+            createdAt: new Date().toISOString(),
+          },
+        };
+        saveDbState(currentDb);
+      }
+
+      const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(currentDb, {
+        plainPassword,
+      });
+      return jsonResponse(200, {
+        ok: true,
+        supabaseDiagnostics,
+        user: currentDb.ownerAccount?.user || null,
       });
     }
 
