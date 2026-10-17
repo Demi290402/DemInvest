@@ -5,6 +5,7 @@
 import crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
+import './nodePlatformBridge';
 import {
   dispatchNotificationAndWebPush,
   fetchLiveFxRatesToBase,

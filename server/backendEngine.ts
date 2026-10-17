@@ -5,9 +5,6 @@
 // Nessuna chiave API privata viene mai esposta al client browser.
 // ==============================================================================
 
-import fs from 'node:fs';
-import path from 'node:path';
-import webPush from 'web-push';
 import {
   AIChatMessage,
   AIToolCallLog,
@@ -44,13 +41,34 @@ import {
 import { calculatePortfolioAnalytics, FxRateTable } from '../src/engines/portfolioEngine';
 import { getExplicitDemoCandles, getExplicitDemoQuote } from './demoReferenceData';
 
-const DATA_DIR =
-  typeof process !== 'undefined' && typeof process.cwd === 'function'
-    ? path.resolve(process.cwd(), 'server', '.data')
-    : '/tmp/deminvest-data';
-const DB_FILE = path.join(DATA_DIR, 'deminvest-db.json');
-const VAPID_FILE = path.join(DATA_DIR, 'vapid-keys.json');
-const SECRETS_FILE = path.join(DATA_DIR, 'runtime-secrets.json');
+export interface PushSubscriptionItem {
+  endpoint: string;
+  keys?: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
+export interface NodePlatformBridge {
+  readJsonFile<T>(filename: string): T | null;
+  writeJsonFile(filename: string, data: unknown): void;
+  generateVapidKeys(): { publicKey: string; privateKey: string };
+  sendWebPush(
+    vapid: { subject: string; publicKey: string; privateKey: string },
+    subscription: PushSubscriptionItem,
+    payload: string
+  ): Promise<void>;
+}
+
+let activeNodeBridge: NodePlatformBridge | null = null;
+
+export function registerNodePlatformBridge(bridge: NodePlatformBridge): void {
+  activeNodeBridge = bridge;
+}
+
+const DB_FILENAME = 'deminvest-db.json';
+const VAPID_FILENAME = 'vapid-keys.json';
+const SECRETS_FILENAME = 'runtime-secrets.json';
 
 let cloudEnvOverrides: Record<string, string | undefined> = {};
 let memoryRuntimeSecrets: RuntimeSecrets = {};
@@ -70,17 +88,6 @@ function getEnvVar(key: string): string {
   return '';
 }
 
-function ensureDataDir(): boolean {
-  try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 interface RuntimeSecrets {
   COINGECKO_API_KEY?: string;
   TWELVE_DATA_API_KEY?: string;
@@ -90,16 +97,8 @@ interface RuntimeSecrets {
 }
 
 function loadRuntimeSecrets(): RuntimeSecrets {
-  let fileSecrets: RuntimeSecrets = {};
-  if (ensureDataDir()) {
-    try {
-      if (fs.existsSync(SECRETS_FILE)) {
-        fileSecrets = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf-8'));
-      }
-    } catch {
-      fileSecrets = {};
-    }
-  }
+  const fileSecrets: RuntimeSecrets =
+    activeNodeBridge?.readJsonFile<RuntimeSecrets>(SECRETS_FILENAME) || {};
   return {
     COINGECKO_API_KEY:
       getEnvVar('COINGECKO_API_KEY') ||
@@ -132,17 +131,10 @@ function loadRuntimeSecrets(): RuntimeSecrets {
 export function saveRuntimeSecret(key: keyof RuntimeSecrets, value: string): void {
   const clean = value.trim();
   memoryRuntimeSecrets[key] = clean;
-  if (ensureDataDir()) {
-    let existing: RuntimeSecrets = {};
-    try {
-      if (fs.existsSync(SECRETS_FILE)) {
-        existing = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf-8'));
-      }
-      existing[key] = clean;
-      fs.writeFileSync(SECRETS_FILE, JSON.stringify(existing, null, 2), 'utf-8');
-    } catch {
-      // Serverless read-only fs: mantenuto in memoryRuntimeSecrets
-    }
+  if (activeNodeBridge) {
+    const existing = activeNodeBridge.readJsonFile<RuntimeSecrets>(SECRETS_FILENAME) || {};
+    existing[key] = clean;
+    activeNodeBridge.writeJsonFile(SECRETS_FILENAME, existing);
   }
 }
 
@@ -164,27 +156,24 @@ export function getOrInitVapidKeys(): VapidKeys {
   }
   if (memoryVapidKeys) return memoryVapidKeys;
 
-  if (ensureDataDir()) {
-    try {
-      if (fs.existsSync(VAPID_FILE)) {
-        const parsed = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf-8'));
-        memoryVapidKeys = parsed;
-        return parsed;
-      }
-    } catch {
-      // regenerate below
+  if (activeNodeBridge) {
+    const parsed = activeNodeBridge.readJsonFile<VapidKeys>(VAPID_FILENAME);
+    if (parsed && parsed.publicKey && parsed.privateKey) {
+      memoryVapidKeys = parsed;
+      return parsed;
     }
   }
 
   let keys: VapidKeys;
-  try {
-    const generated = webPush.generateVAPIDKeys();
+  if (activeNodeBridge) {
+    const generated = activeNodeBridge.generateVapidKeys();
     keys = {
       publicKey: generated.publicKey,
       privateKey: generated.privateKey,
       subject: 'mailto:owner@deminvest.local',
     };
-  } catch {
+    activeNodeBridge.writeJsonFile(VAPID_FILENAME, keys);
+  } else {
     keys = {
       publicKey:
         'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U',
@@ -193,13 +182,6 @@ export function getOrInitVapidKeys(): VapidKeys {
     };
   }
   memoryVapidKeys = keys;
-  if (ensureDataDir()) {
-    try {
-      fs.writeFileSync(VAPID_FILE, JSON.stringify(keys, null, 2), 'utf-8');
-    } catch {
-      // Read-only filesystem fallback
-    }
-  }
   return keys;
 }
 
@@ -217,7 +199,7 @@ export interface PersistedDatabaseState {
   alertRules: AlertRule[];
   generatedSignals: GeneratedSignal[];
   notifications: NotificationItem[];
-  pushSubscriptions: webPush.PushSubscription[];
+  pushSubscriptions: PushSubscriptionItem[];
   portfolioTransactions: PortfolioTransaction[];
   paperAccount: PaperAccountState;
   journalEntries: {
@@ -394,15 +376,11 @@ let supabaseInitialPullDone = false;
 
 export function getDbState(): PersistedDatabaseState {
   if (dbCache) return dbCache;
-  if (ensureDataDir()) {
-    try {
-      if (fs.existsSync(DB_FILE)) {
-        const parsed = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-        dbCache = { ...getDefaultDbState(), ...parsed };
-        return dbCache!;
-      }
-    } catch {
-      // fallback to default
+  if (activeNodeBridge) {
+    const parsed = activeNodeBridge.readJsonFile<Partial<PersistedDatabaseState>>(DB_FILENAME);
+    if (parsed) {
+      dbCache = { ...getDefaultDbState(), ...parsed };
+      return dbCache!;
     }
   }
   dbCache = getDefaultDbState();
@@ -412,12 +390,8 @@ export function getDbState(): PersistedDatabaseState {
 
 export function saveDbState(state: PersistedDatabaseState): void {
   dbCache = state;
-  if (ensureDataDir()) {
-    try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2), 'utf-8');
-    } catch {
-      // Serverless read-only fs: sincronizzato in RAM e Supabase PostgreSQL
-    }
+  if (activeNodeBridge) {
+    activeNodeBridge.writeJsonFile(DB_FILENAME, state);
   }
   void pushStateToSupabaseIfConfigured(state);
 }
@@ -1451,7 +1425,6 @@ export async function dispatchNotificationAndWebPush(params: {
 }): Promise<NotificationItem> {
   const db = getDbState();
   const vapid = getOrInitVapidKeys();
-  webPush.setVapidDetails(vapid.subject, vapid.publicKey, vapid.privateKey);
 
   const quietStart = db.ownerAccount?.user.quietHoursStart || '22:30';
   const quietEnd = db.ownerAccount?.user.quietHoursEnd || '07:30';
@@ -1464,7 +1437,7 @@ export async function dispatchNotificationAndWebPush(params: {
     ? 'SUPPRESSED_QUIET_HOURS'
     : 'SENT';
 
-  if (!inQuietHours && db.pushSubscriptions.length > 0) {
+  if (!inQuietHours && db.pushSubscriptions.length > 0 && activeNodeBridge) {
     const pushPayload = JSON.stringify({
       title: params.title,
       body: params.body,
@@ -1476,10 +1449,10 @@ export async function dispatchNotificationAndWebPush(params: {
       timestamp: new Date().toISOString(),
     });
 
-    const validSubs: webPush.PushSubscription[] = [];
+    const validSubs: PushSubscriptionItem[] = [];
     for (const sub of db.pushSubscriptions) {
       try {
-        await webPush.sendNotification(sub, pushPayload);
+        await activeNodeBridge.sendWebPush(vapid, sub, pushPayload);
         deliveryStatus = 'DELIVERED';
         validSubs.push(sub);
       } catch (err: unknown) {

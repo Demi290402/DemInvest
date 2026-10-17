@@ -3,6 +3,7 @@
 // ==============================================================================
 
 import { describe, expect, it } from 'vitest';
+import '../server/nodePlatformBridge';
 import {
   dispatchNotificationAndWebPush,
   getMarketQuoteForInstrument,

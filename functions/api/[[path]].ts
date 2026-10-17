@@ -6,7 +6,6 @@
 // sul runtime Edge e sincronizzando lo stato con Supabase PostgreSQL.
 // ==============================================================================
 
-import crypto from 'node:crypto';
 import {
   configureCloudEnvironment,
   dispatchNotificationAndWebPush,
@@ -46,8 +45,20 @@ import {
   TimeHorizon,
 } from '../../src/types/domain';
 
-function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(`deminvest_salt_v1::${password}`).digest('hex');
+async function hashPassword(password: string): Promise<string> {
+  const data = new TextEncoder().encode(`deminvest_salt_v1::${password}`);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function generateRandomTokenHex(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 function jsonResponse(statusCode: number, payload: unknown): Response {
@@ -134,9 +145,9 @@ export const onRequest = async (context: {
         });
       }
 
-      const token = crypto.randomBytes(24).toString('hex');
+      const token = generateRandomTokenHex();
       db.ownerAccount = {
-        passwordHash: hashPassword(password),
+        passwordHash: await hashPassword(password),
         user: {
           id: 'OWNER_USER_01',
           email,
@@ -181,16 +192,17 @@ export const onRequest = async (context: {
         });
       }
 
+      const pwdHash = await hashPassword(password);
       if (
         db.ownerAccount.user.email !== email ||
-        db.ownerAccount.passwordHash !== hashPassword(password)
+        db.ownerAccount.passwordHash !== pwdHash
       ) {
         return jsonResponse(401, {
           error: 'Credenziali non valide. Verifica email e password del proprietario.',
         });
       }
 
-      const token = crypto.randomBytes(24).toString('hex');
+      const token = generateRandomTokenHex();
       db.activeSessionToken = token;
       saveDbState(db);
       await pushStateToSupabaseIfConfigured(db);
