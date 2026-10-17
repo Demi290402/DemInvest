@@ -654,7 +654,8 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const reg = await navigator.serviceWorker.ready;
         await reg.showNotification(data.notification.title, {
           body: data.notification.body,
-          icon: '/icons/icon-192.svg',
+          icon: '/Logo_no_sfondo.png',
+          badge: '/Logo_no_sfondo.png',
           tag: 'deminvest-test-push',
         });
       } catch {

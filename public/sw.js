@@ -9,7 +9,7 @@
  *   OFFLINE_CACHE_BLOCKED o marcato con isOfflineCached: true.
  * ============================================================================ */
 
-const CACHE_VERSION = 'deminvest-shell-v1.0.2';
+const CACHE_VERSION = 'deminvest-shell-v1.0.3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -21,6 +21,8 @@ const STATIC_ASSETS = [
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/icons/icon-maskable-512.png',
+  '/icons/icon-192.svg',
+  '/icons/icon-512.svg',
 ];
 
 self.addEventListener('message', (event) => {
@@ -126,8 +128,8 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: payload.body,
-    icon: '/icons/icon-192.svg',
-    badge: '/icons/icon-192.svg',
+    icon: '/Logo_no_sfondo.png',
+    badge: '/Logo_no_sfondo.png',
     tag: payload.tag || 'deminvest-alert',
     renotify: true,
     requireInteraction: payload.severity === 'HIGH' || payload.severity === 'CRITICAL',
