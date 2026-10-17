@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" rx="40" fill="#0d0f12"/>
+  <rect x="8" y="8" width="176" height="176" rx="34" fill="none" stroke="#10b981" stroke-width="4" stroke-opacity="0.35"/>
+  <path d="M40 132 L74 96 L102 114 L148 56" fill="none" stroke="#10b981" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="148" cy="56" r="10" fill="#34d399"/>
+  <path d="M40 148 H152" stroke="#334155" stroke-width="6" stroke-linecap="round"/>
+  <text x="96" y="44" text-anchor="middle" fill="#f8fafc" font-family="system-ui, sans-serif" font-weight="800" font-size="22" letter-spacing="1.5">DEMINVEST</text>
+</svg>
