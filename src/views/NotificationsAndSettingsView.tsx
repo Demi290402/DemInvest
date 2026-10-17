@@ -498,17 +498,13 @@ export const SettingsView: React.FC = () => {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-brand-500" />
-              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
-                Diagnostica & Riconciliazione Persistenza Supabase Cloud
+              <ShieldCheck className="h-5 w-5 text-brand-smart" />
+              <h2 className="text-sm font-bold tracking-tight text-slate-800 dark:text-slate-100">
+                Sincronizzazione Cloud & Integrità Dati
               </h2>
             </div>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              Verifica in tempo reale dello stato di <code className="font-mono">auth.users</code>,{' '}
-              <code className="font-mono">public.profiles</code>,{' '}
-              <code className="font-mono">public.user_preferences</code>,{' '}
-              <code className="font-mono">public.watchlists</code> e{' '}
-              <code className="font-mono">public.portfolios</code>.
+              Verifica e allineamento continuo dello stato del database crittografato, del profilo proprietario, delle watchlist e delle posizioni di portafoglio.
             </p>
           </div>
 
@@ -517,19 +513,19 @@ export const SettingsView: React.FC = () => {
               type="password"
               value={reconcilePassword}
               onChange={(e) => setReconcilePassword(e.target.value)}
-              placeholder="Password account (opzionale per allineare Auth)..."
-              className="rounded-xl border border-slate-700 bg-anthracite-900 px-3 py-2 text-xs text-white"
+              placeholder="Conferma password (opzionale)..."
+              className="rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2 text-xs text-slate-900 transition focus-ring dark:border-navy-700 dark:bg-navy-900 dark:text-white"
             />
             <button
               type="button"
               onClick={handleReconcileSupabase}
               disabled={isReconciling}
               data-testid="reconcile-supabase-btn"
-              className="rounded-xl bg-brand-500 px-4 py-2 text-xs font-bold text-anthracite-950 hover:bg-brand-400 disabled:opacity-50"
+              className="rounded-xl bg-brand-500 px-4 py-2 text-xs font-bold text-anthracite-950 transition hover:bg-brand-400 active:scale-[0.99] disabled:opacity-50 shadow-soft-glow"
             >
               {isReconciling
                 ? 'Sincronizzazione in corso...'
-                : 'Verifica e Riconcilia Ora con Supabase'}
+                : 'Sincronizza e Verifica Integrità Cloud'}
             </button>
           </div>
         </div>

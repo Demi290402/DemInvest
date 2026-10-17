@@ -195,36 +195,43 @@ const MainShell: React.FC = () => {
 
           {/* Controlli Rapidi: Switch Semplice/Pro, Live/Demo, Tema, Assistente AI */}
           <div className="flex items-center gap-2">
-            {/* Switch Modalità Semplice / Pro con stato visivo chiaro */}
+            {/* Switch Modalità Semplice / Pro con selettore moderno */}
             <button
               type="button"
               onClick={() => setUiMode(uiMode === 'SIMPLE' ? 'PRO' : 'SIMPLE')}
               data-testid="toggle-ui-mode-btn"
-              className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-800 transition hover:border-brand-500 focus-ring dark:border-navy-700 dark:bg-navy-850 dark:text-slate-200"
-              title="Passa tra Modalità Semplice (guidata) e Modalità PRO (dettagliata)"
-              aria-label={`Modalità interfaccia corrente: ${uiMode === 'SIMPLE' ? 'Semplice' : 'PRO'}. Clicca per cambiare.`}
+              className="group flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-brand-500/50 focus-ring dark:border-navy-700/80 dark:bg-navy-900 dark:text-slate-200"
+              title="Passa tra vista Semplice guidata e vista PRO analitica"
+              aria-label={`Modalità interfaccia: ${uiMode === 'SIMPLE' ? 'Semplice' : 'PRO'}`}
             >
-              <span className="text-[10px] uppercase text-slate-400">Vista:</span>
-              <span className={`font-mono font-extrabold ${uiMode === 'SIMPLE' ? 'text-brand-smart' : 'text-cyan-400'}`}>
+              <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400">Vista</span>
+              <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-bold ${
+                uiMode === 'SIMPLE'
+                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-brand-smart'
+                  : 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400'
+              }`}>
                 {uiMode === 'SIMPLE' ? 'Semplice' : 'PRO'}
               </span>
             </button>
 
-            {/* Switch LIVE vs DEMO esplicito e disciplinato */}
+            {/* Switch LIVE vs DEMO con indicatore di stato pulsante */}
             <button
               type="button"
               onClick={() =>
                 setDataExecutionMode(dataExecutionMode === 'LIVE' ? 'DEMO' : 'LIVE')
               }
               data-testid="toggle-data-mode-btn"
-              className={`rounded-xl border px-2.5 py-1.5 font-mono text-[11px] font-bold transition focus-ring ${
+              className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold shadow-sm transition focus-ring ${
                 dataExecutionMode === 'LIVE'
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
-                  : 'border-amber-500/50 bg-amber-500/20 text-amber-300'
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300'
               }`}
-              title="Cambia modalità di esecuzione dati tra LIVE e DEMO didattica"
+              title="Alterna tra feed di mercato Live e ambiente simulato Demo"
             >
-              {dataExecutionMode === 'LIVE' ? '● LIVE' : '◐ DEMO'}
+              <span className={`h-2 w-2 rounded-full ${dataExecutionMode === 'LIVE' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`} />
+              <span className="font-bold tracking-tight">
+                {dataExecutionMode === 'LIVE' ? 'Mercato Live' : 'Sandbox Demo'}
+              </span>
             </button>
 
             {/* Switch Dark / Light */}

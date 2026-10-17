@@ -9,7 +9,7 @@
  *   OFFLINE_CACHE_BLOCKED o marcato con isOfflineCached: true.
  * ============================================================================ */
 
-const CACHE_VERSION = 'deminvest-shell-v1.0.1';
+const CACHE_VERSION = 'deminvest-shell-v1.0.2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -17,9 +17,17 @@ const STATIC_ASSETS = [
   '/manifest.webmanifest',
   '/Logo_no_sfondo.png',
   '/favicon.png',
-  '/icons/icon-192.svg',
-  '/icons/icon-512.svg',
+  '/apple-touch-icon.png',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-maskable-512.png',
 ];
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

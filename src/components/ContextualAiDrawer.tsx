@@ -205,12 +205,8 @@ export const ContextualAiDrawer: React.FC = () => {
               <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-slate-400">
                 <span>
                   {msg.role === 'user'
-                    ? 'Tu (Proprietario)'
-                    : `DemInvest AI (${
-                        msg.engineMode === 'GEMINI_LLM_TOOL_VERIFIED'
-                          ? 'Gemini API + Tool Verificati'
-                          : 'Analista Deterministico Tool-Based'
-                      })`}
+                    ? 'Tu'
+                    : 'DemInvest AI'}
                 </span>
                 <span>{msg.createdAt.slice(11, 19)} UTC</span>
               </div>
