@@ -100,6 +100,9 @@ export const onRequest = async (context: {
 
     // 1. BOOTSTRAP
     if (pathname === '/api/bootstrap' && method === 'GET') {
+      if (db.ownerAccount) {
+        await pushStateToSupabaseIfConfigured(db);
+      }
       const vapid = getOrInitVapidKeys();
       const isAuthenticated = Boolean(db.ownerAccount && db.activeSessionToken);
       return jsonResponse(200, {

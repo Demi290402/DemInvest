@@ -3,6 +3,7 @@
 // ==============================================================================
 
 import { onRequest } from '../functions/api/[[path]]';
+import { GENERATED_WORKER_ENV } from './generatedWorkerEnv';
 
 interface CloudflareEnv {
   ASSETS?: {
@@ -15,11 +16,13 @@ export default {
   async fetch(request: Request, env: CloudflareEnv): Promise<Response> {
     const url = new URL(request.url);
 
-    // Estraiamo solo le variabili stringa per il backend engine
-    const stringEnv: Record<string, string | undefined> = {};
+    // Uniamo le variabili generate a build-time con quelle runtime del Worker
+    const mergedEnv: Record<string, string | undefined> = {
+      ...GENERATED_WORKER_ENV,
+    };
     for (const [k, v] of Object.entries(env || {})) {
-      if (typeof v === 'string') {
-        stringEnv[k] = v;
+      if (typeof v === 'string' && v.trim() !== '') {
+        mergedEnv[k] = v;
       }
     }
 
@@ -27,7 +30,7 @@ export default {
     if (url.pathname.startsWith('/api/')) {
       return onRequest({
         request,
-        env: stringEnv,
+        env: mergedEnv,
       });
     }
 
