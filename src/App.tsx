@@ -11,7 +11,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sun,
-  TrendingUp,
   Wallet,
   WifiOff,
 } from 'lucide-react';
@@ -68,8 +67,8 @@ const MainShell: React.FC = () => {
     return (
       <div className="flex min-h-screen items-center justify-center bg-anthracite-950 text-slate-200">
         <div className="text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 animate-pulse items-center justify-center rounded-2xl bg-brand-500/20 text-brand-400">
-            <TrendingUp className="h-6 w-6" />
+          <div className="mx-auto mb-3 flex h-14 w-14 animate-pulse items-center justify-center rounded-2xl bg-brand-500/10 p-2 ring-1 ring-brand-500/20 shadow-soft-glow">
+            <img src="/Logo_no_sfondo.png" alt="DemInvest" className="h-10 w-10 object-contain" />
           </div>
           <div className="text-sm font-bold">Inizializzazione DemInvest...</div>
           <div className="mt-1 text-xs text-slate-500">
@@ -140,8 +139,12 @@ const MainShell: React.FC = () => {
             onClick={() => setActiveTab('dashboard')}
             className="flex cursor-pointer items-center gap-2.5 transition opacity-90 hover:opacity-100"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/15 text-brand-smart ring-1 ring-brand-500/30 shadow-soft-glow">
-              <TrendingUp className="h-5 w-5" aria-hidden="true" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/10 p-1 ring-1 ring-brand-500/20 shadow-soft-glow dark:bg-navy-850/80">
+              <img
+                src="/Logo_no_sfondo.png"
+                alt="DemInvest"
+                className="h-8 w-8 object-contain transition group-hover:scale-105"
+              />
             </div>
             <div>
               <div className="flex items-center gap-1.5">

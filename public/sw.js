@@ -9,12 +9,14 @@
  *   OFFLINE_CACHE_BLOCKED o marcato con isOfflineCached: true.
  * ============================================================================ */
 
-const CACHE_VERSION = 'deminvest-shell-v1.0.0';
+const CACHE_VERSION = 'deminvest-shell-v1.0.1';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/offline.html',
   '/manifest.webmanifest',
+  '/Logo_no_sfondo.png',
+  '/favicon.png',
   '/icons/icon-192.svg',
   '/icons/icon-512.svg',
 ];

@@ -100,7 +100,12 @@ La palette colori è studiata per garantire calma visiva, autorevolezza istituzi
 
 ## 7. ARCHITETTURA DEL LOGO E BRAND MARK
 
-Il marchio grafico di DemInvest combina:
-- Un **poligono ottagonale o scudo stilizzato** (a simboleggiare protezione, disciplina e stabilità patrimoniale);
-- Una **curva di crescita a pendenza sostenibile** (a rappresentare l'investment intelligence e la crescita controllata del capitale);
-- Il payoff fisso: **"Personal Investment Intelligence"**.
+Il marchio grafico ufficiale di DemInvest:
+- Combina un poligono protettivo / esagono ad anello e una curva di crescita dinamica verde smeraldo con freccia ascendente, a simboleggiare protezione patrimoniale e intelligenza analitica.
+- **Asset Primario:** `/public/Logo_no_sfondo.png` (PNG trasparente a 32-bit ad alta risoluzione).
+- **Varianti e Favicon Distribuite:**
+  - `index.html`: `<link rel="icon" type="image/png" href="/Logo_no_sfondo.png">` e `<link rel="apple-touch-icon" href="/Logo_no_sfondo.png">`
+  - Fallback legacy: `/public/favicon.ico` e `/public/favicon.png`
+  - PWA Manifest: `/public/manifest.webmanifest` con icona PNG 397×403 e SVG vettoriali mascherabili
+  - Service Worker: precache in `STATIC_ASSETS` per operatività offline e caricamento immediato
+- Il payoff istituzionale fisso è: **"Personal Investment Intelligence"**.

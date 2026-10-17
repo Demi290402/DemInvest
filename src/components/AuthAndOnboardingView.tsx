@@ -7,7 +7,6 @@ import {
   LogIn,
   ShieldCheck,
   Sparkles,
-  TrendingUp,
   UserCheck,
   UserPlus,
 } from 'lucide-react';
@@ -150,8 +149,12 @@ export const AuthAndOnboardingView: React.FC = () => {
       <div className="flex min-h-screen flex-col items-center justify-center bg-anthracite-950 px-4 py-10 text-slate-100">
         <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-anthracite-900 p-8 shadow-2xl">
           <div className="mb-5 flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-500/15 text-brand-400 ring-1 ring-brand-500/30">
-              <TrendingUp className="h-6 w-6" />
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-500/10 p-1.5 ring-1 ring-brand-500/25 shadow-soft-glow">
+              <img
+                src="/Logo_no_sfondo.png"
+                alt="DemInvest Logo"
+                className="h-9 w-9 object-contain"
+              />
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight text-white">DemInvest</h1>
