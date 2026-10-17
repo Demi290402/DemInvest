@@ -652,9 +652,10 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if ('Notification' in window && Notification.permission === 'granted' && 'serviceWorker' in navigator) {
       try {
         const reg = await navigator.serviceWorker.ready;
+        const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
         await reg.showNotification(data.notification.title, {
           body: data.notification.body,
-          icon: '/Logo_no_sfondo.png',
+          icon: isAndroid ? undefined : '/Logo_no_sfondo.png',
           badge: '/Logo_no_sfondo.png',
           tag: 'deminvest-test-push',
         });

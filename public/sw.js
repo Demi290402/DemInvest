@@ -9,7 +9,7 @@
  *   OFFLINE_CACHE_BLOCKED o marcato con isOfflineCached: true.
  * ============================================================================ */
 
-const CACHE_VERSION = 'deminvest-shell-v1.0.3';
+const CACHE_VERSION = 'deminvest-shell-v1.0.4';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -21,8 +21,6 @@ const STATIC_ASSETS = [
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/icons/icon-maskable-512.png',
-  '/icons/icon-192.svg',
-  '/icons/icon-512.svg',
 ];
 
 self.addEventListener('message', (event) => {
@@ -126,9 +124,12 @@ self.addEventListener('push', (event) => {
     }
   }
 
+  const isAndroid = self.navigator && /android/i.test(self.navigator.userAgent);
+
   const options = {
     body: payload.body,
-    icon: '/Logo_no_sfondo.png',
+    // Su Android WebAPK, omettiamo icon per evitare che il sistema mostri due loghi (uno a sinistra e uno a destra)
+    icon: isAndroid ? undefined : '/Logo_no_sfondo.png',
     badge: '/Logo_no_sfondo.png',
     tag: payload.tag || 'deminvest-alert',
     renotify: true,
