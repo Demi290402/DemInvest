@@ -9,16 +9,21 @@ import {
   AIChatMessage,
   AIToolCallLog,
   AlertRule,
+  AnalyzedInstrumentIntelligenceItem,
   BrokerInstrumentMapping,
   CandleTimeframe,
   DataExecutionMode,
   GeneratedSignal,
   HistoricalCandle,
   MarketQuote,
+  MarketScanFilterParams,
+  MarketScanRunResult,
   NegotiableInstrument,
   NotificationItem,
   PaperAccountState,
   PortfolioTransaction,
+  PositionSimulationInput,
+  PositionSimulationResult,
   ProviderHealthInfo,
   SchedulerStatusInfo,
   SupabaseSyncDiagnostics,
@@ -32,7 +37,20 @@ import {
   INITIAL_NEGOTIABLE_INSTRUMENTS,
   INITIAL_UNDERLYING_ASSETS,
 } from '../src/engines/instrumentRegistry';
-import { computeQuantitativeSnapshot } from '../src/engines/quantitativeEngine';
+import {
+  auditMarketDataQuality,
+  computeQuantitativeSnapshot,
+} from '../src/engines/quantitativeEngine';
+import {
+  detectMarketRegime,
+  evaluateAllStrategiesForInstrument,
+  evaluateMultiTimeframeConsensus,
+  evaluateRiskIntelligence,
+  HORIZON_PROFILES_V3,
+  QUANTITATIVE_STRATEGIES_V3,
+  runSmartMarketScanner,
+  simulatePositionRisk,
+} from '../src/engines/marketIntelligenceEngine';
 import {
   evaluateDeterministicSignal,
   evaluateSignalLifecycleTransition,
@@ -411,12 +429,42 @@ export function getDbState(): PersistedDatabaseState {
   return dbCache;
 }
 
-export function saveDbState(state: PersistedDatabaseState): void {
+export function saveDbState(state: PersistedDatabaseState, skipAutoPush = false): void {
   dbCache = state;
   if (activeNodeBridge) {
     activeNodeBridge.writeJsonFile(DB_FILENAME, state);
   }
-  void pushStateToSupabaseIfConfigured(state);
+  if (!skipAutoPush) {
+    void pushStateToSupabaseIfConfigured(state);
+  }
+}
+
+export function applyIncomingSupabaseHeaders(
+  headers: Headers | Record<string, string | string[] | undefined>
+): void {
+  const getHeader = (name: string): string => {
+    if (typeof (headers as Headers).get === 'function') {
+      return ((headers as Headers).get(name) || '').trim();
+    }
+    const rec = headers as Record<string, string | string[] | undefined>;
+    const v = rec[name] || rec[name.toLowerCase()];
+    if (Array.isArray(v)) return (v[0] || '').trim();
+    return (v || '').trim();
+  };
+
+  const anonHeader = getHeader('x-deminvest-supabase-anon-key');
+  const serviceHeader = getHeader('x-deminvest-supabase-service-key');
+  const urlHeader = getHeader('x-deminvest-supabase-url');
+
+  if (anonHeader && !memoryRuntimeSecrets.SUPABASE_ANON_KEY) {
+    saveRuntimeSecret('SUPABASE_ANON_KEY', anonHeader);
+  }
+  if (serviceHeader && !memoryRuntimeSecrets.SUPABASE_SERVICE_ROLE_KEY) {
+    saveRuntimeSecret('SUPABASE_SERVICE_ROLE_KEY', serviceHeader);
+  }
+  if (urlHeader && urlHeader.startsWith('http') && !memoryRuntimeSecrets.SUPABASE_URL) {
+    saveRuntimeSecret('SUPABASE_URL', urlHeader);
+  }
 }
 
 let lastSupabaseDiagnostics: SupabaseSyncDiagnostics = {
@@ -731,12 +779,203 @@ export async function pushStateToSupabaseIfConfigured(
   };
 
   try {
-    // 1. Salva in public.application_settings (tabella garantita dallo schema 0001)
+    let authUserId: string | null = null;
+    let userAccessToken: string = cfg.serviceRoleKey || cachedSupabaseUserAccessToken || cfg.apiKey;
+
+    // 1. PRIMA PRIORITÀ: Sincronizzazione immediata di Supabase Auth (auth.users)
+    if (state.ownerAccount) {
+      const owner = state.ownerAccount.user;
+      // Normalizza eventuale dominio .local (rifiutato da GoTrue) in .com per compatibilità Auth
+      const authEmail = owner.email.endsWith('.local')
+        ? owner.email.replace(/\.local$/i, '.com')
+        : owner.email;
+      const passwordToUse =
+        options?.plainPassword || `DemInvest!${state.ownerAccount.passwordHash.slice(0, 18)}`;
+
+      if (cfg.serviceRoleKey) {
+        const listUsersRes = await supabaseSmartFetch(
+          `${cfg.baseUrl}/auth/v1/admin/users`,
+          cfg.serviceRoleKey
+        );
+        if (listUsersRes.ok) {
+          lastSupabaseDiagnostics.connectionStatus = 'CONNECTED';
+          const listData = (await listUsersRes.json()) as {
+            users?: { id: string; email?: string; email_confirmed_at?: string | null }[];
+          };
+          const found = listData.users?.find(
+            (u) =>
+              u.email?.toLowerCase() === owner.email.toLowerCase() ||
+              u.email?.toLowerCase() === authEmail.toLowerCase()
+          );
+          if (found) {
+            authUserId = found.id;
+            lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
+            logStep(
+              'Supabase Auth (auth.users)',
+              'OK',
+              `Utente proprietario ${found.email} presente in auth.users (ID: ${authUserId}).`
+            );
+            if (options?.plainPassword || !found.email_confirmed_at) {
+              await supabaseSmartFetch(
+                `${cfg.baseUrl}/auth/v1/admin/users/${authUserId}`,
+                cfg.serviceRoleKey,
+                {
+                  method: 'PUT',
+                  extraHeaders: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    email_confirm: true,
+                    ...(options?.plainPassword ? { password: options.plainPassword } : {}),
+                    user_metadata: { display_name: owner.displayName, is_owner: true },
+                  }),
+                }
+              );
+            }
+          }
+        }
+
+        if (!authUserId) {
+          const createRes = await supabaseSmartFetch(
+            `${cfg.baseUrl}/auth/v1/admin/users`,
+            cfg.serviceRoleKey,
+            {
+              method: 'POST',
+              extraHeaders: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: authEmail,
+                password: passwordToUse,
+                email_confirm: true,
+                user_metadata: { display_name: owner.displayName, is_owner: true },
+              }),
+            }
+          );
+          if (createRes.ok) {
+            lastSupabaseDiagnostics.connectionStatus = 'CONNECTED';
+            const created = (await createRes.json()) as { id?: string };
+            if (created.id) {
+              authUserId = created.id;
+              lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
+              logStep(
+                'Supabase Auth (auth.users)',
+                'OK',
+                `Account proprietario ${authEmail} creato e confermato in auth.users.`
+              );
+            }
+          } else {
+            const errTxt = await createRes.text();
+            logStep(
+              'Supabase Auth (auth.users)',
+              'WARN',
+              `Creazione admin non completata (HTTP ${createRes.status}): ${errTxt.slice(0, 120)}`
+            );
+          }
+        }
+      } else {
+        // Flusso con chiave pubblica (anon / publishable)
+        const loginRes = await supabaseSmartFetch(
+          `${cfg.baseUrl}/auth/v1/token?grant_type=password`,
+          cfg.apiKey,
+          {
+            method: 'POST',
+            extraHeaders: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: authEmail, password: passwordToUse }),
+          }
+        );
+        if (loginRes.ok) {
+          lastSupabaseDiagnostics.connectionStatus = 'CONNECTED';
+          const data = (await loginRes.json()) as {
+            access_token?: string;
+            user?: { id?: string };
+          };
+          if (data.user?.id) authUserId = data.user.id;
+          if (data.access_token) {
+            userAccessToken = data.access_token;
+            cachedSupabaseUserAccessToken = data.access_token;
+          }
+          lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
+          logStep(
+            'Supabase Auth (Sign-In)',
+            'OK',
+            `Sessione autenticata per ${authEmail} su Supabase Auth.`
+          );
+        } else {
+          const loginErrText = await loginRes.text();
+          if (loginErrText.includes('Email not confirmed') || loginErrText.includes('email_not_confirmed')) {
+            lastSupabaseDiagnostics.connectionStatus = 'CONNECTED';
+            lastSupabaseDiagnostics.authUserStatus = 'EMAIL_UNCONFIRMED';
+            logStep(
+              'Supabase Auth (Sign-In)',
+              'WARN',
+              `Utente ${authEmail} già presente in auth.users (in attesa di conferma email o chiave Service Role).`
+            );
+          } else {
+            const signupRes = await supabaseSmartFetch(
+              `${cfg.baseUrl}/auth/v1/signup`,
+              cfg.apiKey,
+              {
+                method: 'POST',
+                extraHeaders: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  email: authEmail,
+                  password: passwordToUse,
+                  data: { display_name: owner.displayName, is_owner: true },
+                }),
+              }
+            );
+            if (signupRes.ok) {
+              lastSupabaseDiagnostics.connectionStatus = 'CONNECTED';
+              const sData = (await signupRes.json()) as {
+                id?: string;
+                access_token?: string;
+                user?: { id?: string };
+              };
+              authUserId = sData.user?.id || sData.id || null;
+              if (sData.access_token) {
+                userAccessToken = sData.access_token;
+                cachedSupabaseUserAccessToken = sData.access_token;
+                lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
+                logStep(
+                  'Supabase Auth (Sign-Up)',
+                  'OK',
+                  `Utente ${authEmail} registrato e autenticato in auth.users.`
+                );
+              } else {
+                lastSupabaseDiagnostics.authUserStatus = 'EMAIL_UNCONFIRMED';
+                logStep(
+                  'Supabase Auth (Sign-Up)',
+                  'OK',
+                  `Utente ${authEmail} creato in auth.users (ID: ${authUserId || 'generato'}).`
+                );
+              }
+            } else {
+              const sErr = await signupRes.text();
+              if (sErr.includes('already registered') || sErr.includes('user_already_exists')) {
+                lastSupabaseDiagnostics.connectionStatus = 'CONNECTED';
+                lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
+                logStep(
+                  'Supabase Auth (auth.users)',
+                  'OK',
+                  `Utente ${authEmail} già registrato in auth.users.`
+                );
+              } else {
+                logStep(
+                  'Supabase Auth (Sign-Up)',
+                  'WARN',
+                  `Risposta Auth HTTP ${signupRes.status}: ${sErr.slice(0, 120)}`
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Salva in public.application_settings
     const appSettingsRes = await supabaseSmartFetch(
       `${cfg.baseUrl}/rest/v1/application_settings`,
       cfg.apiKey,
       {
         method: 'POST',
+        bearerToken: userAccessToken,
         extraHeaders: upsertHeaders,
         body: JSON.stringify({
           key: 'DEMINVEST_RUNTIME_STATE',
@@ -759,24 +998,26 @@ export async function pushStateToSupabaseIfConfigured(
     } else {
       const errText = await appSettingsRes.text();
       if (appSettingsRes.status === 401 || appSettingsRes.status === 403) {
-        lastSupabaseDiagnostics.connectionStatus = 'AUTH_ERROR';
+        if (lastSupabaseDiagnostics.connectionStatus !== 'CONNECTED') {
+          lastSupabaseDiagnostics.connectionStatus = 'AUTH_ERROR';
+        }
       } else if (appSettingsRes.status === 404) {
         lastSupabaseDiagnostics.connectionStatus = 'SCHEMA_INCOMPLETE';
       }
-      lastSupabaseDiagnostics.lastError = `HTTP ${appSettingsRes.status}: ${errText.slice(0, 180)}`;
       logStep(
         'application_settings (DEMINVEST_RUNTIME_STATE)',
-        'ERROR',
-        `HTTP ${appSettingsRes.status}: ${errText.slice(0, 160)}`
+        'WARN',
+        `HTTP ${appSettingsRes.status}: ${errText.slice(0, 140)}`
       );
     }
 
-    // 2. Salva anche in public.app_state_store (se presente)
+    // 3. Salva anche in public.app_state_store (se presente)
     const appStoreRes = await supabaseSmartFetch(
       `${cfg.baseUrl}/rest/v1/app_state_store`,
       cfg.apiKey,
       {
         method: 'POST',
+        bearerToken: userAccessToken,
         extraHeaders: upsertHeaders,
         body: JSON.stringify({
           id: 'deminvest_primary_state',
@@ -787,17 +1028,12 @@ export async function pushStateToSupabaseIfConfigured(
     );
     if (appStoreRes.ok) {
       logStep('app_state_store', 'OK', 'Snapshot JSON sincronizzato.');
-    } else {
-      logStep(
-        'app_state_store',
-        'WARN',
-        `HTTP ${appStoreRes.status} (esegui migrazione 0002 se la tabella o policy non è aggiornata).`
-      );
     }
 
-    // 3. Popola i cataloghi relazionali (market_data_providers, trading_venues, assets, instruments)
+    // 4. Popola i cataloghi relazionali (market_data_providers, trading_venues, assets, instruments)
     await supabaseSmartFetch(`${cfg.baseUrl}/rest/v1/market_data_providers`, cfg.apiKey, {
       method: 'POST',
+      bearerToken: userAccessToken,
       extraHeaders: upsertHeaders,
       body: JSON.stringify([
         {
@@ -845,6 +1081,7 @@ export async function pushStateToSupabaseIfConfigured(
 
     await supabaseSmartFetch(`${cfg.baseUrl}/rest/v1/trading_venues`, cfg.apiKey, {
       method: 'POST',
+      bearerToken: userAccessToken,
       extraHeaders: upsertHeaders,
       body: JSON.stringify([
         {
@@ -902,6 +1139,7 @@ export async function pushStateToSupabaseIfConfigured(
 
     const assetsRes = await supabaseSmartFetch(`${cfg.baseUrl}/rest/v1/assets`, cfg.apiKey, {
       method: 'POST',
+      bearerToken: userAccessToken,
       extraHeaders: upsertHeaders,
       body: JSON.stringify(
         state.assets.map((a) => ({
@@ -926,6 +1164,7 @@ export async function pushStateToSupabaseIfConfigured(
 
     const instRes = await supabaseSmartFetch(`${cfg.baseUrl}/rest/v1/instruments`, cfg.apiKey, {
       method: 'POST',
+      bearerToken: userAccessToken,
       extraHeaders: upsertHeaders,
       body: JSON.stringify(
         state.instruments.map((inst) => ({
@@ -957,165 +1196,9 @@ export async function pushStateToSupabaseIfConfigured(
       );
     }
 
-    // 4. Sincronizzazione e riconciliazione di auth.users, profiles, user_preferences,
-    // watchlists, portfolios, portfolio_transactions e alert_rules
+    // 5. Sincronizzazione tabelle profilo proprietario (profiles, user_preferences, watchlists, portfolios)
     if (state.ownerAccount) {
       const owner = state.ownerAccount.user;
-      const passwordToUse =
-        options?.plainPassword || `DemInvest!${state.ownerAccount.passwordHash.slice(0, 18)}`;
-      let authUserId: string | null = null;
-      let userAccessToken: string = cfg.apiKey;
-
-      if (cfg.serviceRoleKey) {
-        const listUsersRes = await supabaseSmartFetch(
-          `${cfg.baseUrl}/auth/v1/admin/users`,
-          cfg.serviceRoleKey
-        );
-        if (listUsersRes.ok) {
-          const listData = (await listUsersRes.json()) as {
-            users?: { id: string; email?: string; email_confirmed_at?: string | null }[];
-          };
-          const found = listData.users?.find(
-            (u) => u.email?.toLowerCase() === owner.email.toLowerCase()
-          );
-          if (found) {
-            authUserId = found.id;
-            lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
-            logStep(
-              'Supabase Auth (auth.users)',
-              'OK',
-              `Utente proprietario ${owner.email} individuato in auth.users (ID: ${authUserId}).`
-            );
-            // Se viene passata la password reale o l'email non era confermata, allinea l'account
-            if (options?.plainPassword || !found.email_confirmed_at) {
-              await supabaseSmartFetch(
-                `${cfg.baseUrl}/auth/v1/admin/users/${authUserId}`,
-                cfg.serviceRoleKey,
-                {
-                  method: 'PUT',
-                  extraHeaders: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    email_confirm: true,
-                    ...(options?.plainPassword ? { password: options.plainPassword } : {}),
-                    user_metadata: { display_name: owner.displayName, is_owner: true },
-                  }),
-                }
-              );
-            }
-          }
-        }
-
-        if (!authUserId) {
-          const createRes = await supabaseSmartFetch(
-            `${cfg.baseUrl}/auth/v1/admin/users`,
-            cfg.serviceRoleKey,
-            {
-              method: 'POST',
-              extraHeaders: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                email: owner.email,
-                password: passwordToUse,
-                email_confirm: true,
-                user_metadata: { display_name: owner.displayName, is_owner: true },
-              }),
-            }
-          );
-          if (createRes.ok) {
-            const created = (await createRes.json()) as { id?: string };
-            if (created.id) {
-              authUserId = created.id;
-              lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
-              logStep(
-                'Supabase Auth (auth.users)',
-                'OK',
-                `Account proprietario ${owner.email} creato e confermato in auth.users.`
-              );
-            }
-          } else {
-            const errTxt = await createRes.text();
-            logStep(
-              'Supabase Auth (auth.users)',
-              'WARN',
-              `Creazione admin non completata (HTTP ${createRes.status}): ${errTxt.slice(0, 120)}`
-            );
-          }
-        }
-      } else {
-        // Flusso con chiave pubblica (anon / publishable)
-        const loginRes = await supabaseSmartFetch(
-          `${cfg.baseUrl}/auth/v1/token?grant_type=password`,
-          cfg.apiKey,
-          {
-            method: 'POST',
-            extraHeaders: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: owner.email, password: passwordToUse }),
-          }
-        );
-        if (loginRes.ok) {
-          const data = (await loginRes.json()) as {
-            access_token?: string;
-            user?: { id?: string };
-          };
-          if (data.user?.id) authUserId = data.user.id;
-          if (data.access_token) {
-            userAccessToken = data.access_token;
-            cachedSupabaseUserAccessToken = data.access_token;
-          }
-          lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
-          logStep(
-            'Supabase Auth (Sign-In)',
-            'OK',
-            `Sessione autenticata per ${owner.email} su Supabase Auth.`
-          );
-        } else {
-          const signupRes = await supabaseSmartFetch(
-            `${cfg.baseUrl}/auth/v1/signup`,
-            cfg.apiKey,
-            {
-              method: 'POST',
-              extraHeaders: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                email: owner.email,
-                password: passwordToUse,
-                data: { display_name: owner.displayName, is_owner: true },
-              }),
-            }
-          );
-          if (signupRes.ok) {
-            const sData = (await signupRes.json()) as {
-              id?: string;
-              access_token?: string;
-              user?: { id?: string };
-            };
-            authUserId = sData.user?.id || sData.id || null;
-            if (sData.access_token) {
-              userAccessToken = sData.access_token;
-              cachedSupabaseUserAccessToken = sData.access_token;
-              lastSupabaseDiagnostics.authUserStatus = 'PRESENT_IN_AUTH_USERS';
-              logStep(
-                'Supabase Auth (Sign-Up)',
-                'OK',
-                `Utente ${owner.email} registrato in auth.users.`
-              );
-            } else {
-              lastSupabaseDiagnostics.authUserStatus = 'EMAIL_UNCONFIRMED';
-              logStep(
-                'Supabase Auth (Sign-Up)',
-                'WARN',
-                `Utente registrato in auth.users, ma conferma email attiva su Supabase (esegui migrazione 0002 o configura SUPABASE_SERVICE_ROLE_KEY per bypassare la conferma).`
-              );
-            }
-          } else {
-            const sErr = await signupRes.text();
-            logStep(
-              'Supabase Auth (Sign-Up)',
-              'WARN',
-              `Risposta Auth HTTP ${signupRes.status}: ${sErr.slice(0, 120)}`
-            );
-          }
-        }
-      }
-
       if (authUserId) {
         // Aggiorna l'ID locale dell'owner con il vero UUID di Supabase Auth
         state.ownerAccount.user.id = authUserId;
@@ -2954,17 +3037,87 @@ export async function processContextualAiChat(params: {
     executedAt: new Date().toISOString(),
   });
 
+  // Tool 6 (Prompt 3): detect_market_regime & Multi-Timeframe
+  const t5 = Date.now();
+  const dataQuality = auditMarketDataQuality(targetInstrument.id, '1d', candles, quote, {
+    isDerivative: targetInstrument.isDerivative,
+    assetClass: targetInstrument.assetClass,
+  });
+  const regime = detectMarketRegime(indicators);
+  const multiTimeframe = evaluateMultiTimeframeConsensus(
+    targetInstrument.id,
+    params.activeHorizon,
+    indicators,
+    null
+  );
+  toolCalls.push({
+    id: `TOOL_${Date.now()}_REGIME`,
+    toolName: 'detect_market_regime',
+    inputParams: { instrumentId: targetInstrument.id, horizon: params.activeHorizon },
+    outputSummary: {
+      dataQuality: dataQuality.classification,
+      directionalRegime: regime.directionalRegime,
+      volatilityRegime: regime.volatilityRegime,
+      multiTimeframeConsensus: multiTimeframe.consensusState,
+      compatibleStrategies: regime.compatibleStrategies,
+    },
+    executionMs: Math.max(1, Date.now() - t5),
+    status: 'SUCCESS',
+    executedAt: new Date().toISOString(),
+  });
+
+  // Tool 7 (Prompt 3): evaluate_strategy_setup & assess_signal_risk
+  const t6 = Date.now();
+  const holdsPos = portfolioSummary.positions.some((p) => p.instrumentId === targetInstrument.id);
+  const strategiesV3 = evaluateAllStrategiesForInstrument({
+    instrument: targetInstrument,
+    quote,
+    dataQuality,
+    indicators,
+    regime,
+    multiTimeframe,
+    horizon: params.activeHorizon,
+    holdsPositionInPortfolio: holdsPos,
+  });
+  const bestStrategyV3 = [...strategiesV3].sort(
+    (a, b) => (b.isTriggered ? 100 : 0) + b.heuristicScore - ((a.isTriggered ? 100 : 0) + a.heuristicScore)
+  )[0];
+  const riskReportV3 = evaluateRiskIntelligence({
+    instrument: targetInstrument,
+    quote,
+    indicators,
+    bestSetup: bestStrategyV3,
+    baseCurrency: 'EUR',
+  });
+  toolCalls.push({
+    id: `TOOL_${Date.now()}_STRAT_RISK`,
+    toolName: 'evaluate_strategy_setup',
+    inputParams: { instrumentId: targetInstrument.id, horizon: params.activeHorizon },
+    outputSummary: {
+      bestStrategyId: bestStrategyV3.strategyId,
+      isTriggered: bestStrategyV3.isTriggered,
+      signalClassification: bestStrategyV3.signalClassification,
+      sellDistinction: bestStrategyV3.sellDistinction,
+      invalidationPrice: bestStrategyV3.invalidationPrice,
+      riskBand: riskReportV3.riskBand,
+      overallRiskScore: riskReportV3.overallRiskScore,
+    },
+    executionMs: Math.max(1, Date.now() - t6),
+    status: 'SUCCESS',
+    executedAt: new Date().toISOString(),
+  });
+
   // Registra tutti i tool log
   db.aiToolLogs = [...toolCalls, ...db.aiToolLogs].slice(0, 150);
 
-  // Costruzione delle 5 sezioni obbligatorie anti-allucinazione (Sezione 13)
+  // Costruzione delle 5 sezioni obbligatorie anti-allucinazione (Sezione 13 & Prompt 3 Sezione 14)
   const verifiedData: string[] = [];
   if (quote.validity === 'VALID') {
     verifiedData.push(
       `Strumento selezionato: ${targetInstrument.name} (${targetInstrument.ticker}) — Tipo: ${targetInstrument.instrumentType} su ${targetInstrument.venueName} (MIC: ${targetInstrument.venueMic}).`
     );
     verifiedData.push(
-      `Quotazione verificata: ${quote.price} ${quote.currency} (Variazione 24h: ${quote.changePct >= 0 ? '+' : ''}${quote.changePct}%) | Fonte: ${quote.providerName} | Rilevato: ${quote.observedAt} | Stato freschezza: ${quote.freshness} (ritardo ${quote.delaySeconds}s).`
+      `Quotazione verificata: ${quote.price} ${quote.currency} (Variazione 24h: ${quote.changePct >= 0 ? '+' : ''}${quote.changePct}%) | Fonte: ${quote.providerName} | Rilevato: ${quote.observedAt} | Stato freschezza: ${quote.freshness} | Audit Qualità Dati: ${dataQuality.classification}.`
     );
   } else {
     verifiedData.push(
@@ -2988,13 +3141,19 @@ export async function processContextualAiChat(params: {
   const quantitativeCalculations: string[] = [];
   if (indicators.sufficientData) {
     quantitativeCalculations.push(
-      `Trend (su ${indicators.observationsCount} candele chiuse): Direzione ${indicators.trendDirection} | SMA(20) = ${indicators.sma20 ?? 'N/D'} | SMA(50) = ${indicators.sma50 ?? 'N/D'} | EMA(20) = ${indicators.ema20 ?? 'N/D'} | ADX(14) = ${indicators.adx14 ?? 'N/D'}.`
+      `Regime di Mercato Rilevato: ${regime.explanation}`
+    );
+    quantitativeCalculations.push(
+      `Consenso Multi-Timeframe: ${multiTimeframe.summary}`
+    );
+    quantitativeCalculations.push(
+      `Trend (su ${indicators.observationsCount} candele chiuse): Direzione ${indicators.trendDirection} | SMA(20) = ${indicators.sma20 ?? 'N/D'} | SMA(50) = ${indicators.sma50 ?? 'N/D'} | EMA(20) = ${indicators.ema20 ?? 'N/D'} | EMA(50) = ${indicators.ema50 ?? 'N/D'} | ADX(14) = ${indicators.adx14 ?? 'N/D'}.`
     );
     quantitativeCalculations.push(
       `Momentum: RSI(14) = ${indicators.rsi14 ?? 'N/D'} | MACD Histogram = ${indicators.macd?.histogram ?? 'N/D'} | ROC(10) = ${indicators.roc10 !== null ? indicators.roc10 + '%' : 'N/D'}.`
     );
     quantitativeCalculations.push(
-      `Volatilità e Rischio: ATR(14) = ${indicators.atr14 ?? 'N/D'} (${indicators.atrPct ?? 'N/D'}% del prezzo) | Volatilità Annualizzata = ${indicators.historicalVolatilityAnnualizedPct !== null ? indicators.historicalVolatilityAnnualizedPct + '%' : 'N/D'} | Max Drawdown finestra = ${indicators.maxDrawdownPct !== null ? indicators.maxDrawdownPct + '%' : 'N/D'}.`
+      `Volatilità e Rischio: Fascia Rischio = ${riskReportV3.riskBand} (Score ${riskReportV3.overallRiskScore}/100) | ATR(14) = ${indicators.atr14 ?? 'N/D'} (${indicators.atrPct ?? 'N/D'}% del prezzo) | Volatilità Annualizzata = ${indicators.historicalVolatilityAnnualizedPct !== null ? indicators.historicalVolatilityAnnualizedPct + '%' : 'N/D'} | Max Drawdown = ${indicators.maxDrawdownPct !== null ? indicators.maxDrawdownPct + '%' : 'N/D'}.`
     );
     quantitativeCalculations.push(
       `Supporti e Resistenze (${indicators.supportResistanceAlgorithmDoc.split(':')[0]}): Supporti chiave a [${indicators.supports.map((s) => s.price).join(', ') || 'Nessun cluster vicino'}] | Resistenze chiave a [${indicators.resistances.map((r) => r.price).join(', ') || 'Nessun cluster vicino'}].`
@@ -3011,20 +3170,18 @@ export async function processContextualAiChat(params: {
 
   const technicalInterpretations: string[] = [];
   if (quote.validity === 'VALID' && indicators.sufficientData) {
-    const evalSig = evaluateDeterministicSignal({
-      instrument: targetInstrument,
-      quote,
-      indicators,
-      horizon: params.activeHorizon,
-      verifiedMapping: brokerMap,
-    });
     technicalInterpretations.push(
-      `Esito Signal Intelligence Engine sull'orizzonte ${params.activeHorizon}: ${evalSig.signalType} (Stato: ${evalSig.status}) — Punteggio euristico multifattoriale: ${evalSig.heuristicScore}/100 (non è una probabilità di profitto).`
+      `Strategia Primaria (${bestStrategyV3.strategyName} v${bestStrategyV3.strategyVersion}): Classificazione ${bestStrategyV3.signalClassification} (Stato: ${bestStrategyV3.signalStatus}) — Punteggio euristico: ${bestStrategyV3.heuristicScore}/100 (non è una probabilità di profitto).`
     );
-    technicalInterpretations.push(evalSig.quantitativeRationale);
-    if (evalSig.conditionsUnmet.length > 0) {
+    technicalInterpretations.push(bestStrategyV3.rationale);
+    if (bestStrategyV3.invalidationPrice !== null) {
       technicalInterpretations.push(
-        `Condizioni non soddisfatte / da monitorare: ${evalSig.conditionsUnmet.join(' | ')}`
+        `Livello di Invalidazione Tecnico: ${bestStrategyV3.invalidationPrice} ${quote.currency} (${bestStrategyV3.invalidationReason}).`
+      );
+    }
+    if (bestStrategyV3.conditionsUnmet.length > 0) {
+      technicalInterpretations.push(
+        `Condizioni non soddisfatte / da monitorare: ${bestStrategyV3.conditionsUnmet.join(' | ')}`
       );
     }
   } else {
@@ -3148,3 +3305,206 @@ export async function processContextualAiChat(params: {
   saveDbState(db);
   return assistantMsg;
 }
+
+// ------------------------------------------------------------------------------
+// MARKET INTELLIGENCE V3 ORCHESTRATORS (SCANNER, SINGLE ANALYSIS, SIMULATOR)
+// ------------------------------------------------------------------------------
+
+export async function analyzeBackendInstrumentIntelligence(params: {
+  instrumentId: string;
+  horizon?: TimeHorizon;
+  timeframe?: CandleTimeframe;
+  mode?: DataExecutionMode;
+}): Promise<AnalyzedInstrumentIntelligenceItem | null> {
+  const db = getDbState();
+  const mode = params.mode || db.ownerAccount?.user.dataExecutionMode || 'LIVE';
+  const horizon = params.horizon || 'BREVE';
+  const profile = HORIZON_PROFILES_V3[horizon];
+  const timeframe = params.timeframe || profile.primaryTimeframe;
+
+  const instrument = db.instruments.find((i) => i.id === params.instrumentId);
+  if (!instrument) return null;
+
+  const quote = await getMarketQuoteForInstrument(instrument.id, mode);
+  const rawCandles = await getHistoricalCandlesForInstrument(instrument.id, timeframe, mode);
+  const higherCandles =
+    profile.higherConfirmationTimeframe !== timeframe
+      ? await getHistoricalCandlesForInstrument(
+          instrument.id,
+          profile.higherConfirmationTimeframe,
+          mode
+        )
+      : rawCandles;
+
+  const dataQuality = auditMarketDataQuality(instrument.id, timeframe, rawCandles, quote, {
+    isDerivative: instrument.isDerivative,
+    assetClass: instrument.assetClass,
+    minRequiredCandles: 15,
+  });
+
+  const annualization = instrument.assetClass === 'CRYPTO' ? 'CRYPTO' : 'OTHER';
+  const indicators = computeQuantitativeSnapshot(
+    instrument.id,
+    timeframe,
+    rawCandles,
+    annualization
+  );
+  const higherIndicators = computeQuantitativeSnapshot(
+    instrument.id,
+    profile.higherConfirmationTimeframe,
+    higherCandles,
+    annualization
+  );
+
+  const regime = detectMarketRegime(indicators);
+  const multiTimeframe = evaluateMultiTimeframeConsensus(
+    instrument.id,
+    horizon,
+    indicators,
+    higherIndicators
+  );
+
+  const holdsInPortfolio = db.portfolioTransactions.some(
+    (tx) => tx.instrumentId === instrument.id && tx.transactionType === 'BUY'
+  );
+
+  const strategiesEvaluated = evaluateAllStrategiesForInstrument({
+    instrument,
+    quote,
+    dataQuality,
+    indicators,
+    regime,
+    multiTimeframe,
+    horizon,
+    holdsPositionInPortfolio: holdsInPortfolio,
+  });
+
+  const sortedStrategies = [...strategiesEvaluated].sort(
+    (a, b) =>
+      (b.isTriggered ? 100 : 0) +
+      b.heuristicScore -
+      ((a.isTriggered ? 100 : 0) + a.heuristicScore)
+  );
+  const bestStrategySetup = sortedStrategies[0];
+
+  const riskReport = evaluateRiskIntelligence({
+    instrument,
+    quote,
+    indicators,
+    bestSetup: bestStrategySetup,
+    baseCurrency: db.ownerAccount?.user.preferredCurrency || 'EUR',
+  });
+
+  const priorityTier: AnalyzedInstrumentIntelligenceItem['priorityTier'] = holdsInPortfolio
+    ? 'PORTFOLIO'
+    : db.alertRules.some((r) => r.instrumentId === instrument.id && r.isActive)
+      ? 'ACTIVE_ALERTS'
+      : db.watchlistInstrumentIds.includes(instrument.id)
+        ? 'WATCHLIST'
+        : 'CATALOG';
+
+  return {
+    instrumentId: instrument.id,
+    ticker: instrument.ticker,
+    name: instrument.name,
+    assetClass: instrument.assetClass,
+    venueMic: instrument.venueMic,
+    currency: instrument.quoteCurrency,
+    priorityTier,
+    quote,
+    dataQuality,
+    indicators,
+    regime,
+    multiTimeframe,
+    strategiesEvaluated,
+    bestStrategySetup,
+    riskReport,
+  };
+}
+
+export async function executeBackendSmartMarketScan(params: {
+  filters?: MarketScanFilterParams;
+  mode?: DataExecutionMode;
+}): Promise<MarketScanRunResult> {
+  const db = getDbState();
+  const mode = params.mode || db.ownerAccount?.user.dataExecutionMode || 'LIVE';
+  const filters = params.filters || {};
+  const horizon: TimeHorizon = filters.horizon || 'BREVE';
+  const profile = HORIZON_PROFILES_V3[horizon];
+  const timeframe: CandleTimeframe = filters.timeframe || profile.primaryTimeframe;
+
+  const quotesMap: Record<string, MarketQuote> = {};
+  const candlesByInstrument: Record<string, HistoricalCandle[]> = {};
+  const higherTfCandlesByInstrument: Record<string, HistoricalCandle[]> = {};
+
+  for (const inst of db.instruments) {
+    quotesMap[inst.id] = await getMarketQuoteForInstrument(inst.id, mode);
+    candlesByInstrument[inst.id] = await getHistoricalCandlesForInstrument(
+      inst.id,
+      timeframe,
+      mode
+    );
+    if (profile.higherConfirmationTimeframe !== timeframe) {
+      higherTfCandlesByInstrument[inst.id] = await getHistoricalCandlesForInstrument(
+        inst.id,
+        profile.higherConfirmationTimeframe,
+        mode
+      );
+    } else {
+      higherTfCandlesByInstrument[inst.id] = candlesByInstrument[inst.id];
+    }
+  }
+
+  const brokerSymbolMap: Record<string, string> = {};
+  const instrumentBrokersMap: Record<string, string[]> = {};
+  for (const bm of db.brokerMappings) {
+    if (!instrumentBrokersMap[bm.instrumentId]) {
+      instrumentBrokersMap[bm.instrumentId] = [];
+    }
+    instrumentBrokersMap[bm.instrumentId].push(bm.brokerCode);
+    if (bm.verificationStatus !== 'UNVERIFIED' && !brokerSymbolMap[bm.instrumentId]) {
+      brokerSymbolMap[bm.instrumentId] = `${bm.brokerCode}: ${bm.brokerSymbol}`;
+    }
+  }
+
+  const portfolioInstrumentIds = Array.from(
+    new Set(
+      db.portfolioTransactions
+        .filter((tx) => tx.instrumentId && tx.transactionType === 'BUY')
+        .map((tx) => tx.instrumentId as string)
+    )
+  );
+
+  const activeAlertInstrumentIds = Array.from(
+    new Set(db.alertRules.filter((r) => r.isActive).map((r) => r.instrumentId))
+  );
+
+  return runSmartMarketScanner({
+    instruments: db.instruments,
+    quotesMap,
+    candlesByInstrument,
+    higherTfCandlesByInstrument,
+    watchlistIds: db.watchlistInstrumentIds,
+    activeAlertInstrumentIds,
+    portfolioInstrumentIds,
+    brokerSymbolMap,
+    instrumentBrokersMap,
+    filters,
+    mode,
+    baseCurrency: db.ownerAccount?.user.preferredCurrency || 'EUR',
+  });
+}
+
+export function runBackendPositionSimulation(
+  input: PositionSimulationInput
+): PositionSimulationResult {
+  return simulatePositionRisk(input);
+}
+
+export function getQuantitativeStrategiesCatalogV3() {
+  return {
+    strategies: QUANTITATIVE_STRATEGIES_V3,
+    horizonProfiles: HORIZON_PROFILES_V3,
+  };
+}
+

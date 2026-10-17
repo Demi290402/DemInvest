@@ -1,13 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   CheckCircle2,
+  Database,
+  KeyRound,
   Lock,
+  LogIn,
   ShieldCheck,
   Sparkles,
   TrendingUp,
   UserCheck,
+  UserPlus,
 } from 'lucide-react';
 import { useDemInvest } from '../context/DemInvestContext';
+import {
+  getActiveFrontendSupabaseConfig,
+  saveFrontendSupabaseAnonKey,
+} from '../lib/supabaseClient';
 import { AssetClass, TimeHorizon, UIMode } from '../types/domain';
 
 export const AuthAndOnboardingView: React.FC = () => {
@@ -16,17 +24,40 @@ export const AuthAndOnboardingView: React.FC = () => {
     hasOwnerAccount,
     isAuthenticated,
     user,
+    supabaseDiagnostics,
     registerOwner,
     loginOwner,
     updateUserProfile,
     setUiMode,
+    saveBackendProviderKey,
   } = useDemInvest();
 
-  const [email, setEmail] = useState('proprietario@deminvest.local');
+  const [authMode, setAuthMode] = useState<'LOGIN' | 'REGISTER'>(() =>
+    hasOwnerAccount ? 'LOGIN' : 'REGISTER'
+  );
+  const [email, setEmail] = useState('investitore@deminvest.com');
   const [password, setPassword] = useState('DemInvest2026!');
   const [displayName, setDisplayName] = useState('Investitore Proprietario');
   const [authError, setAuthError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Stato chiave Supabase diretta dal Login
+  const [supabaseKeyInput, setSupabaseKeyInput] = useState('');
+  const [showSupabaseConfig, setShowSupabaseConfig] = useState(false);
+  const [supabaseSavedFeedback, setSupabaseSavedFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (hasOwnerAccount) {
+      setAuthMode('LOGIN');
+    }
+  }, [hasOwnerAccount]);
+
+  const frontendSbConfig = getActiveFrontendSupabaseConfig();
+  const isSupabaseKeyReady = Boolean(
+    frontendSbConfig.hasAnonKey ||
+      supabaseDiagnostics?.hasAnonOrPublishableKey ||
+      supabaseDiagnostics?.hasServiceRoleKey
+  );
 
   // Onboarding state
   const [experienceLevel, setExperienceLevel] = useState<
@@ -54,14 +85,30 @@ export const AuthAndOnboardingView: React.FC = () => {
     'MT5',
   ]);
 
+  const handleSaveSupabaseKeyInline = async () => {
+    const cleanKey = supabaseKeyInput.trim();
+    if (!cleanKey) return;
+    saveFrontendSupabaseAnonKey(cleanKey);
+    await saveBackendProviderKey('SUPABASE_ANON_KEY', cleanKey);
+    setSupabaseKeyInput('');
+    setSupabaseSavedFeedback(
+      'Chiave Supabase collegata con successo! Ora procedi con Accedi o Registra per salvare l\'utenza su Supabase Auth.'
+    );
+  };
+
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
     setSubmitting(true);
     try {
-      const res = hasOwnerAccount
-        ? await loginOwner({ email, password })
-        : await registerOwner({ email, password, displayName });
+      if (supabaseKeyInput.trim()) {
+        saveFrontendSupabaseAnonKey(supabaseKeyInput.trim());
+        await saveBackendProviderKey('SUPABASE_ANON_KEY', supabaseKeyInput.trim());
+      }
+      const res =
+        authMode === 'LOGIN'
+          ? await loginOwner({ email, password })
+          : await registerOwner({ email, password, displayName });
       if (!res.ok) {
         setAuthError(res.error || 'Autenticazione non riuscita');
       }
@@ -102,7 +149,7 @@ export const AuthAndOnboardingView: React.FC = () => {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-anthracite-950 px-4 py-10 text-slate-100">
         <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-anthracite-900 p-8 shadow-2xl">
-          <div className="mb-6 flex items-center gap-3">
+          <div className="mb-5 flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-500/15 text-brand-400 ring-1 ring-brand-500/30">
               <TrendingUp className="h-6 w-6" />
             </div>
@@ -114,7 +161,43 @@ export const AuthAndOnboardingView: React.FC = () => {
             </div>
           </div>
 
-          <div className="mb-6 rounded-xl border border-brand-500/25 bg-brand-500/5 p-3.5 text-xs text-slate-300">
+          {/* Selettore Esplicito Accedi (Login) vs Registra Proprietario */}
+          <div className="mb-5 grid grid-cols-2 gap-2 rounded-xl border border-slate-800 bg-anthracite-950 p-1">
+            <button
+              type="button"
+              data-testid="auth-mode-login"
+              onClick={() => {
+                setAuthMode('LOGIN');
+                setAuthError(null);
+              }}
+              className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition ${
+                authMode === 'LOGIN'
+                  ? 'bg-brand-500 text-anthracite-950 shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <LogIn className="h-3.5 w-3.5" />
+              Accedi (Login)
+            </button>
+            <button
+              type="button"
+              data-testid="auth-mode-register"
+              onClick={() => {
+                setAuthMode('REGISTER');
+                setAuthError(null);
+              }}
+              className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition ${
+                authMode === 'REGISTER'
+                  ? 'bg-brand-500 text-anthracite-950 shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              Prima Registrazione
+            </button>
+          </div>
+
+          <div className="mb-4 rounded-xl border border-brand-500/25 bg-brand-500/5 p-3.5 text-xs text-slate-300">
             <div className="flex items-center gap-2 font-semibold text-brand-400">
               <ShieldCheck className="h-4 w-4 shrink-0" />
               <span>
@@ -124,10 +207,70 @@ export const AuthAndOnboardingView: React.FC = () => {
               </span>
             </div>
             <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
-              {hasOwnerAccount
-                ? 'L\'account del proprietario è registrato. Le nuove registrazioni pubbliche sono bloccate. Effettua il login per accedere.'
-                : 'Configura il primo e unico account proprietario autorizzato. Una volta registrato, eventuali registrazioni successive saranno bloccate.'}
+              {authMode === 'LOGIN'
+                ? 'Accedi direttamente alla tua dashboard DemInvest senza dover ripetere la registrazione o l\'onboarding.'
+                : 'Configura l\'unico account proprietario autorizzato e sincronizzalo su Supabase Auth.'}
             </p>
+          </div>
+
+          {/* Box Stato Collegamento Diretto Supabase Auth */}
+          <div className="mb-4 rounded-xl border border-slate-800 bg-anthracite-950/80 p-3 text-xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Database
+                  className={`h-4 w-4 ${
+                    isSupabaseKeyReady ? 'text-emerald-400' : 'text-amber-400'
+                  }`}
+                />
+                <span className="font-semibold text-slate-200">
+                  Supabase Auth ({frontendSbConfig.url.replace('https://', '').split('.')[0]})
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSupabaseConfig((prev) => !prev)}
+                className="text-[11px] font-medium text-brand-400 underline hover:text-brand-300"
+              >
+                {showSupabaseConfig
+                  ? 'Chiudi'
+                  : isSupabaseKeyReady
+                    ? 'Chiave Attiva (Modifica)'
+                    : 'Collega Chiave Supabase'}
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-slate-400">
+              {isSupabaseKeyReady
+                ? 'Chiave Supabase Publishable/Anon rilevata: l\'accesso sincronizzerà automaticamente auth.users e public.profiles.'
+                : 'Chiave API Supabase non rilevata nell\'ambiente corrente. Clicca "Collega Chiave Supabase" per incollare la tua chiave Anon/Publishable prima di accedere.'}
+            </p>
+
+            {(showSupabaseConfig || !isSupabaseKeyReady) && (
+              <div className="mt-2.5 space-y-2 border-t border-slate-800 pt-2.5">
+                <label className="block text-[11px] font-medium text-slate-300">
+                  Incolla Supabase Anon / Publishable Key (`eyJ...` o `sb_publishable_...`)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={supabaseKeyInput}
+                    onChange={(e) => setSupabaseKeyInput(e.target.value)}
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6... oppure sb_publishable_..."
+                    className="flex-1 rounded-lg border border-slate-700 bg-anthracite-900 px-2.5 py-1.5 text-xs text-white focus:border-brand-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveSupabaseKeyInline}
+                    className="flex items-center gap-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-brand-400 hover:bg-slate-700"
+                  >
+                    <KeyRound className="h-3.5 w-3.5" />
+                    Salva
+                  </button>
+                </div>
+                {supabaseSavedFeedback && (
+                  <p className="text-[11px] text-emerald-400">{supabaseSavedFeedback}</p>
+                )}
+              </div>
+            )}
           </div>
 
           {authError && (
@@ -137,7 +280,7 @@ export const AuthAndOnboardingView: React.FC = () => {
           )}
 
           <form onSubmit={handleAuthSubmit} className="space-y-4">
-            {!hasOwnerAccount && (
+            {authMode === 'REGISTER' && (
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-300">
                   Nome o Identificativo Proprietario
@@ -154,7 +297,7 @@ export const AuthAndOnboardingView: React.FC = () => {
 
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-300">
-                Email Proprietario
+                Email Proprietario (usa un dominio standard es. .com / .it)
               </label>
               <input
                 type="email"
@@ -187,8 +330,8 @@ export const AuthAndOnboardingView: React.FC = () => {
             >
               <Lock className="h-4 w-4" />
               {submitting
-                ? 'Verifica crittografica in corso...'
-                : hasOwnerAccount
+                ? 'Verifica e sincronizzazione Supabase in corso...'
+                : authMode === 'LOGIN'
                   ? 'Accedi a DemInvest'
                   : 'Registra Account Proprietario'}
             </button>

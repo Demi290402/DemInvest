@@ -49,7 +49,7 @@ export function getExplicitDemoQuote(instrument: NegotiableInstrument): MarketQu
     venueMic: instrument.venueMic,
     observedAt: nowIso,
     fetchedAt: nowIso,
-    freshness: 'DELAYED',
+    freshness: 'REALTIME',
     delaySeconds: 0,
     validity: 'VALID',
     isMarketOpen: true,

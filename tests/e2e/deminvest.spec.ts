@@ -36,13 +36,19 @@ test.describe('DemInvest — Flusso End-to-End Completo (Release 1 MVP Reale)', 
       await expect(uiModeBtn).toContainText('PRO');
     }
 
-    // 5. Navigazione a Mercati e verifica grafico TradingView Lightweight Charts e Broker Mapping
+    // 5. Navigazione a Mercati e verifica grafico TradingView Lightweight Charts, Market Regime V3 e Broker Mapping
     await page.getByTestId('nav-markets').click();
     await expect(page.getByText(/Scheda Broker & Nomenclatura/i)).toBeVisible();
+    await expect(page.getByTestId('market-regime-panel')).toBeVisible();
 
-    // 6. Navigazione a Opportunità & Market Screener
+    // 6. Navigazione a Opportunità & Market Screener + Smart Scanner V3 + Simulatore Posizione
     await page.getByTestId('nav-opportunities').click();
     await expect(page.getByText(/Market Screener & Opportunity Discovery/i)).toBeVisible();
+    await expect(page.getByTestId('position-simulator-card')).toBeVisible();
+    await page.getByTestId('run-position-simulation-btn').click();
+    await expect(page.getByTestId('position-simulation-result')).toBeVisible();
+    await page.getByTestId('run-smart-scanner-btn').click();
+    await expect(page.getByTestId('smart-scanner-v3-panel')).toBeVisible();
 
     // 7. Navigazione a Trading Lab (Paper Trading & Backtesting)
     await page.getByTestId('nav-lab').click();
@@ -73,4 +79,5 @@ test.describe('DemInvest — Flusso End-to-End Completo (Release 1 MVP Reale)', 
     await expect(page.getByText(/1. Dati Verificati/i).first()).toBeVisible();
   });
 });
+
 

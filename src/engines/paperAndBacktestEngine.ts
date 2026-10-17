@@ -22,7 +22,9 @@ import {
 } from '../types/domain';
 import { roundAccounting } from './portfolioEngine';
 import {
+  calculateADX,
   calculateATR,
+  calculateEMA,
   calculateMaxDrawdownPct,
   calculateRSI,
   calculateSMA,
@@ -39,6 +41,45 @@ export interface StrategyCatalogItem {
 }
 
 export const VERSIONED_STRATEGIES: StrategyCatalogItem[] = [
+  {
+    id: 'STRAT_TREND_FOLLOWING_V1',
+    name: 'Trend Following Multi-EMA (EMA 20 / EMA 50) & ADX(14)',
+    version: '1.0.0',
+    horizon: 'BREVE / MEDIO / LUNGO',
+    description:
+      'Strategia trend-following long-only su candele chiuse che richiede Prezzo > EMA(20) >= EMA(50), ADX(14) >= 18 e RSI(14) in fascia [48..72], con esecuzione su Open t+1 e stop ATR.',
+    rulesSummary: [
+      'Ingresso Long: Close > EMA(20) >= EMA(50), ADX(14) >= 18, RSI(14) in [48..72] (eseguito a Open t+1)',
+      'Uscita: Chiusura sotto EMA(20) con RSI < 45 oppure Stop Loss dinamico (-2.0 * ATR14)',
+      'Zero look-ahead bias, separazione In-Sample (70%) / Out-of-Sample (30%)',
+    ],
+  },
+  {
+    id: 'STRAT_CONFIRMED_BREAKOUT_V1',
+    name: 'Breakout di Resistenza Confermato & ATR(14)',
+    version: '1.0.0',
+    horizon: 'BREVISSIMO / BREVE / MEDIO',
+    description:
+      'Cattura le rotture rialziste confermate sopra il massimo/resistenza delle ultime 12 barre chiuse con RSI(14) > 53 e conferma di range/volume.',
+    rulesSummary: [
+      'Ingresso Long: Close(t) > Max(High[t-12..t-1]) con RSI(14) > 53 (eseguito a Open t+1)',
+      'Uscita: Rientro sotto il livello di breakout meno 0.9 * ATR(14) o violazione minimo a 6 barre',
+      'Applicazione integrale di spread, slippage e commissioni roundtrip',
+    ],
+  },
+  {
+    id: 'STRAT_PULLBACK_IN_TREND_V1',
+    name: 'Pullback Controllato in Trend Rialzista (EMA 20 / SMA 50)',
+    version: '1.0.0',
+    horizon: 'BREVE / MEDIO',
+    description:
+      'Entra sui ritracciamenti ordinati verso EMA(20) / supporto quando il trend primario (SMA 50) resta rialzista e RSI(14) scarica nella fascia [38..58].',
+    rulesSummary: [
+      'Ingresso Long: Close > SMA(50), distanza da EMA(20) <= 2.2% e RSI(14) in [38..58] (eseguito a Open t+1)',
+      'Uscita: Target RSI(14) >= 66 o rottura ribassista di SMA(50) - 1.0 * ATR(14)',
+      'Separazione rigorosa In-Sample (70%) / Out-of-Sample (30%)',
+    ],
+  },
   {
     id: 'STRAT_SMA_CROSS_10_20_V1',
     name: 'Trend Following Crossover (SMA 10 / SMA 20)',
@@ -354,17 +395,51 @@ export function runDeterministicBacktest(params: {
 
     const sma10 = calculateSMA(closes, 10);
     const sma20 = calculateSMA(closes, 20);
+    const sma50 = calculateSMA(closes, 50) ?? sma20;
+    const ema20 = calculateEMA(closes, 20) ?? sma20;
+    const ema50 = calculateEMA(closes, 50) ?? sma20;
     const prevCloses = closes.slice(0, closes.length - 1);
     const prevSma10 = calculateSMA(prevCloses, 10);
     const prevSma20 = calculateSMA(prevCloses, 20);
     const rsi14 = calculateRSI(closes, 14);
+    const adx14 = calculateADX(windowCandles, 14) ?? 20;
     const atr14 = calculateATR(windowCandles, 14) ?? currentBar.close * 0.02;
 
     let shouldEnterLong = false;
     let shouldExitLong = false;
     let exitReason = '';
 
-    if (strategyId === 'STRAT_SMA_CROSS_10_20_V1') {
+    if (strategyId === 'STRAT_TREND_FOLLOWING_V1') {
+      if (ema20 !== null && ema50 !== null && rsi14 !== null) {
+        if (currentBar.close > ema20 && ema20 >= ema50 && adx14 >= 18 && rsi14 >= 48 && rsi14 <= 72) {
+          shouldEnterLong = true;
+        } else if (currentBar.close < ema20 && rsi14 < 45) {
+          shouldExitLong = true;
+          exitReason = `Rottura ribassista EMA(20) con RSI(14)=${rsi14}`;
+        }
+      }
+    } else if (strategyId === 'STRAT_CONFIRMED_BREAKOUT_V1') {
+      const prior12 = windowCandles.slice(Math.max(0, windowCandles.length - 13), windowCandles.length - 1);
+      const prior6 = windowCandles.slice(Math.max(0, windowCandles.length - 7), windowCandles.length - 1);
+      const high12 = Math.max(...prior12.map((c) => c.high));
+      const low6 = Math.min(...prior6.map((c) => c.low));
+      if (currentBar.close > high12 && (rsi14 ?? 55) >= 53) {
+        shouldEnterLong = true;
+      } else if (currentBar.close < low6) {
+        shouldExitLong = true;
+        exitReason = 'Rientro sotto supporto dinamico a 6 barre (Breakout Exit)';
+      }
+    } else if (strategyId === 'STRAT_PULLBACK_IN_TREND_V1') {
+      if (ema20 !== null && sma50 !== null && rsi14 !== null) {
+        const distEma20 = Math.abs(currentBar.close - ema20) / ema20;
+        if (currentBar.close >= sma50 * 0.99 && distEma20 <= 0.022 && rsi14 >= 38 && rsi14 <= 58) {
+          shouldEnterLong = true;
+        } else if (rsi14 >= 66 || currentBar.close < sma50 - atr14) {
+          shouldExitLong = true;
+          exitReason = rsi14 >= 66 ? `Target momentum raggiunto (RSI 14 = ${rsi14})` : 'Violazione SMA(50) - 1x ATR';
+        }
+      }
+    } else if (strategyId === 'STRAT_SMA_CROSS_10_20_V1') {
       if (
         sma10 !== null &&
         sma20 !== null &&

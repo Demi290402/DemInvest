@@ -17,15 +17,30 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  auditMarketDataQuality,
+  calculateADXDetailed,
   calculateATR,
   calculateEMA,
   calculateMACD,
   calculateMaxDrawdownPct,
+  calculateMomentum,
+  calculateNormalizedSlopePct,
   calculateRSI,
   calculateSMA,
   computeQuantitativeSnapshot,
+  detectConfirmedPivots,
   sanitizeClosedCandles,
 } from '../src/engines/quantitativeEngine';
+import {
+  detectMarketRegime,
+  evaluateAllStrategiesForInstrument,
+  evaluateMultiTimeframeConsensus,
+  evaluateRiskIntelligence,
+  QUANTITATIVE_STRATEGIES_V3,
+  rankMarketOpportunities,
+  runSmartMarketScanner,
+  simulatePositionRisk,
+} from '../src/engines/marketIntelligenceEngine';
 import {
   calculatePortfolioAnalytics,
   convertCurrencyToBase,
@@ -508,3 +523,264 @@ describe('DemInvest — Universal Instrument Registry, Broker CSV & Backtesting 
     expect(paperRes.order.simulatedCommission).toBeGreaterThan(0);
   });
 });
+
+describe('DemInvest — Prompt 3: Market Intelligence V3, Regimes, Strategies & Risk Simulator', () => {
+  const btcInst = INITIAL_NEGOTIABLE_INSTRUMENTS.find((i) => i.id === 'INST_BTC_USD_SPOT')!;
+  const aaplInst = INITIAL_NEGOTIABLE_INSTRUMENTS.find((i) => i.id === 'INST_AAPL_XNGS_EQ')!;
+
+  it('13. Data Quality Fail-Safe Layer: valida candele OHLCV, rileva salti anomali/split e blocca segnali su dati STALE/INVALID', () => {
+    const validCandles = buildControlledCandles(45, 70000, 300);
+    const validQuote: MarketQuote = {
+      instrumentId: 'INST_BTC_USD_SPOT',
+      price: validCandles[validCandles.length - 1].close,
+      changeAbs: 450,
+      changePct: 0.65,
+      currency: 'USD',
+      providerId: 'coingecko',
+      providerName: 'CoinGecko API v3',
+      venueMic: 'CRYPTO_GLOBAL',
+      observedAt: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      freshness: 'REALTIME',
+      delaySeconds: 8,
+      validity: 'VALID',
+      isMarketOpen: true,
+      isDemoData: false,
+    };
+
+    const auditOk = auditMarketDataQuality('INST_BTC_USD_SPOT', '1d', validCandles, validQuote, {
+      isDerivative: false,
+      assetClass: 'CRYPTO',
+      minRequiredCandles: 20,
+    });
+    expect(auditOk.classification).toBe('VALID');
+    expect(auditOk.blockingSignalGeneration).toBe(false);
+    expect(auditOk.pricePositiveCheck).toBe(true);
+    expect(auditOk.ohlcCoherenceCheck).toBe(true);
+
+    // Simula split non rettificato / salto anomalo (>65% in una barra)
+    const dirtyCandles = [...validCandles];
+    dirtyCandles[30] = {
+      ...dirtyCandles[30],
+      open: 180000,
+      high: 185000,
+      low: 179000,
+      close: 182000,
+    };
+    const auditSplit = auditMarketDataQuality('INST_BTC_USD_SPOT', '1d', dirtyCandles, validQuote, {
+      isDerivative: false,
+      assetClass: 'CRYPTO',
+      minRequiredCandles: 20,
+    });
+    expect(auditSplit.anomalyFlags).toContain('EXTREME_JUMP_OR_UNADJUSTED_SPLIT');
+    expect(auditSplit.blockingSignalGeneration).toBe(true);
+  });
+
+  it('14. Pivot High/Low Confermati senza Look-Ahead Bias: confirmedAtCandleTime è sempre successivo a pivotCandleTime', () => {
+    const candles = buildControlledCandles(35, 100, 0.5);
+    // Creiamo un chiaro Pivot High alla barra 15
+    candles[15] = {
+      ...candles[15],
+      high: 145,
+      close: 140,
+    };
+    const pivots = detectConfirmedPivots(candles, 2, 2);
+    expect(pivots.confirmedPivotHighs.length).toBeGreaterThan(0);
+    for (const p of [...pivots.confirmedPivotHighs, ...pivots.confirmedPivotLows]) {
+      expect(new Date(p.confirmedAtCandleTime).getTime()).toBeGreaterThan(
+        new Date(p.pivotCandleTime).getTime()
+      );
+      expect(p.rightBars).toBe(2);
+    }
+
+    const closes = candles.map((c) => c.close);
+    expect(calculateNormalizedSlopePct(closes, 5)).not.toBeNull();
+    expect(calculateMomentum(closes, 10)).not.toBeNull();
+    expect(calculateADXDetailed(candles, 14)).not.toBeNull();
+  });
+
+  it('15. Market Regime Detector & Multi-Timeframe Consensus: separa regime direzionale e volatilità', () => {
+    const candles1d = buildControlledCandles(60, 50000, 450);
+    const candles1w = buildControlledCandles(60, 40000, 600);
+    const ind1d = computeQuantitativeSnapshot('INST_BTC_USD_SPOT', '1d', candles1d, 'CRYPTO');
+    const ind1w = computeQuantitativeSnapshot('INST_BTC_USD_SPOT', '1w', candles1w, 'CRYPTO');
+
+    const regime = detectMarketRegime(ind1d);
+    expect(regime.directionalRegime).toBe('BULLISH_TREND');
+    expect(['HIGH_VOLATILITY', 'LOW_VOLATILITY', 'NORMAL_VOLATILITY']).toContain(
+      regime.volatilityRegime
+    );
+    expect(regime.compatibleStrategies.length).toBeGreaterThan(0);
+
+    const mtf = evaluateMultiTimeframeConsensus('INST_BTC_USD_SPOT', 'BREVE', ind1d, ind1w);
+    expect(mtf.consensusState).toBe('CONCORDANT_BULLISH');
+    expect(mtf.isHigherTimeframeAligned).toBe(true);
+    expect(mtf.convictionAdjustment).toBeGreaterThan(0);
+  });
+
+  it('16. Quantitative Strategy Engine V3: valuta le 4 strategie e distingue EXISTING_POSITION_EXIT da BEARISH_MARKET_SIGNAL', () => {
+    expect(QUANTITATIVE_STRATEGIES_V3.length).toBe(4);
+
+    // Costruiamo un downtrend per verificare la distinzione dei segnali di vendita
+    const downCandles = buildControlledCandles(60, 200, -1.5);
+    const downInd = computeQuantitativeSnapshot('INST_AAPL_XNGS_EQ', '1d', downCandles, 'OTHER');
+    const downQuote: MarketQuote = {
+      instrumentId: 'INST_AAPL_XNGS_EQ',
+      price: downCandles[downCandles.length - 1].close,
+      changeAbs: -3,
+      changePct: -2.4,
+      currency: 'USD',
+      providerId: 'twelvedata',
+      providerName: 'Twelve Data API',
+      venueMic: 'XNGS',
+      observedAt: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      freshness: 'REALTIME',
+      delaySeconds: 10,
+      validity: 'VALID',
+      isMarketOpen: true,
+      isDemoData: false,
+    };
+    const dq = auditMarketDataQuality('INST_AAPL_XNGS_EQ', '1d', downCandles, downQuote, {
+      isDerivative: false,
+      assetClass: 'EQUITY',
+      minRequiredCandles: 20,
+    });
+    const regime = detectMarketRegime(downInd);
+    const mtf = evaluateMultiTimeframeConsensus('INST_AAPL_XNGS_EQ', 'BREVE', downInd, downInd);
+
+    const evalWithHolding = evaluateAllStrategiesForInstrument({
+      instrument: aaplInst,
+      quote: downQuote,
+      dataQuality: dq,
+      indicators: downInd,
+      regime,
+      multiTimeframe: mtf,
+      horizon: 'BREVE',
+      holdsPositionInPortfolio: true,
+    });
+    const trendStratHolding = evalWithHolding.find(
+      (s) => s.strategyId === 'STRAT_TREND_FOLLOWING_V1'
+    )!;
+    expect(trendStratHolding.sellDistinction).toBe('EXISTING_POSITION_EXIT');
+
+    const evalWithoutHolding = evaluateAllStrategiesForInstrument({
+      instrument: aaplInst,
+      quote: downQuote,
+      dataQuality: dq,
+      indicators: downInd,
+      regime,
+      multiTimeframe: mtf,
+      horizon: 'BREVE',
+      holdsPositionInPortfolio: false,
+    });
+    const trendStratNoHolding = evalWithoutHolding.find(
+      (s) => s.strategyId === 'STRAT_TREND_FOLLOWING_V1'
+    )!;
+    expect(trendStratNoHolding.sellDistinction).toBe('BEARISH_MARKET_SIGNAL');
+  });
+
+  it('17. Simulatore Posizione, Opportunity Ranking (Penalità Collinearità) e Smart Market Scanner V3', () => {
+    const sim = simulatePositionRisk({
+      instrumentId: 'INST_BTC_USD_SPOT',
+      capitalAllocatedInBase: 5000,
+      entryPrice: 80000,
+      invalidationStopPrice: 72000, // -10% stop = 500 EUR + costi
+      targetPrices: [92000, 100000],
+      totalPortfolioEquityInBase: 20000,
+      maxAcceptablePortfolioRiskPct: 1.5, // max 300 EUR accettabili -> eccede soglia!
+      commissionPct: 0.1,
+      spreadBps: 15,
+      slippageBps: 5,
+      fxRateToBase: 1,
+    });
+
+    expect(sim.positionUnits).toBeCloseTo(0.0625, 4);
+    expect(sim.totalRoundtripCostsInBase).toBeGreaterThan(0);
+    expect(sim.maxLossAtInvalidationInBase).toBeGreaterThan(500);
+    expect(sim.exceedsMaxRiskThreshold).toBe(true);
+    expect(sim.recommendedMaxCapitalInBase).toBeLessThan(5000);
+    expect(sim.targetsSimulation.length).toBe(2);
+
+    const upCandles = buildControlledCandles(60, 60000, 350);
+    const upQuote: MarketQuote = {
+      instrumentId: 'INST_BTC_USD_SPOT',
+      price: upCandles[upCandles.length - 1].close,
+      changeAbs: 600,
+      changePct: 0.8,
+      currency: 'USD',
+      providerId: 'coingecko',
+      providerName: 'CoinGecko API v3',
+      venueMic: 'CRYPTO_GLOBAL',
+      observedAt: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      freshness: 'REALTIME',
+      delaySeconds: 5,
+      validity: 'VALID',
+      isMarketOpen: true,
+      isDemoData: false,
+    };
+
+    const unavailableQuote: MarketQuote = {
+      ...upQuote,
+      instrumentId: 'INST_AAPL_XNGS_EQ',
+      price: 0,
+      validity: 'SUSPENDED',
+      statusMessage: 'API Key Twelve Data mancante',
+    };
+
+    const scanResult = runSmartMarketScanner({
+      instruments: [btcInst, aaplInst],
+      quotesMap: {
+        INST_BTC_USD_SPOT: upQuote,
+        INST_AAPL_XNGS_EQ: unavailableQuote,
+      },
+      candlesByInstrument: {
+        INST_BTC_USD_SPOT: upCandles,
+        INST_AAPL_XNGS_EQ: [],
+      },
+      higherTfCandlesByInstrument: {
+        INST_BTC_USD_SPOT: upCandles,
+        INST_AAPL_XNGS_EQ: [],
+      },
+      watchlistIds: ['INST_BTC_USD_SPOT'],
+      activeAlertInstrumentIds: [],
+      portfolioInstrumentIds: [],
+      brokerSymbolMap: { INST_BTC_USD_SPOT: 'TRADE_REPUBLIC: BTC' },
+      filters: { horizon: 'BREVE' },
+      mode: 'LIVE',
+      baseCurrency: 'EUR',
+    });
+
+    expect(scanResult.universeTotal).toBe(2);
+    expect(scanResult.analyzedCount).toBe(1);
+    expect(scanResult.excludedCount).toBe(1);
+    expect(scanResult.excludedInstruments[0].instrumentId).toBe('INST_AAPL_XNGS_EQ');
+    expect(scanResult.topRankedOpportunities.length).toBe(1);
+    expect(scanResult.topRankedOpportunities[0].dataCompletenessScore).toBeGreaterThan(0);
+
+    // Verifica Backtest deterministico con le nuove strategie V3
+    for (const stratId of [
+      'STRAT_TREND_FOLLOWING_V1',
+      'STRAT_CONFIRMED_BREAKOUT_V1',
+      'STRAT_PULLBACK_IN_TREND_V1',
+    ]) {
+      const bt = runDeterministicBacktest({
+        strategyId: stratId,
+        instrumentId: 'INST_BTC_USD_SPOT',
+        instrumentTicker: 'BTC/USD',
+        providerId: 'coingecko',
+        timeframe: '1d',
+        rawCandles: upCandles,
+        initialCapital: 10000,
+        commissionPct: 0.1,
+        spreadBps: 10,
+        slippageBps: 5,
+        maxRiskPerTradePct: 2,
+      });
+      expect(bt.strategyId).toBe(stratId);
+      expect(bt.antiBiasChecks.closedCandlesOnly).toBe(true);
+    }
+  });
+});
+

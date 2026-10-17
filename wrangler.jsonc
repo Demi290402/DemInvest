@@ -2,6 +2,7 @@
   "name": "deminvest",
   "main": "server/cloudflareWorker.ts",
   "compatibility_date": "2026-10-12",
+  "keep_vars": true,
   "observability": {
     "enabled": true
   },

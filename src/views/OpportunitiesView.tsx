@@ -1,14 +1,23 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  Activity,
   AlertTriangle,
+  Calculator,
   CheckCircle2,
   Filter,
+  Radar,
   ShieldAlert,
   Sparkles,
   Zap,
 } from 'lucide-react';
 import { useDemInvest } from '../context/DemInvestContext';
-import { AssetClass, TimeHorizon } from '../types/domain';
+import {
+  AssetClass,
+  DirectionalMarketRegime,
+  PositionSimulationResult,
+  TimeHorizon,
+  VolatilityMarketRegime,
+} from '../types/domain';
 
 interface OpportunitiesViewProps {
   onOpenInstrument: (instrumentId: string) => void;
@@ -24,22 +33,95 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
     watchlistInstrumentIds,
     generatedSignals,
     triggerSchedulerNow,
+    latestMarketScan,
+    isScanningMarket,
+    runMarketIntelligenceScan,
+    simulatePosition,
   } = useDemInvest();
 
   const [filterClass, setFilterClass] = useState<AssetClass | 'ALL'>('ALL');
   const [filterHorizon, setFilterHorizon] = useState<TimeHorizon | 'ALL'>('ALL');
   const [filterBroker, setFilterBroker] = useState<string>('ALL');
   const [filterFreshness, setFilterFreshness] = useState<string>('ALL');
+  const [filterDirectionalRegime, setFilterDirectionalRegime] = useState<
+    DirectionalMarketRegime | 'ALL'
+  >('ALL');
+  const [filterVolatilityRegime, setFilterVolatilityRegime] = useState<
+    VolatilityMarketRegime | 'ALL'
+  >('ALL');
+  const [breakoutOnly, setBreakoutOnly] = useState(false);
+  const [pullbackOnly, setPullbackOnly] = useState(false);
   const [onlyWatchlist, setOnlyWatchlist] = useState(false);
   const [hideNoTrade, setHideNoTrade] = useState(false);
   const [scanning, setScanning] = useState(false);
 
+  // Interactive Position Simulator state
+  const [simInstrumentId, setSimInstrumentId] = useState<string>('INST_BTC_USD_SPOT');
+  const [simCapital, setSimCapital] = useState<string>('2500');
+  const [simPortfolioTotal, setSimPortfolioTotal] = useState<string>('25000');
+  const [simMaxRiskPct, setSimMaxRiskPct] = useState<string>('1.5');
+  const [simEntryPrice, setSimEntryPrice] = useState<string>('85000');
+  const [simInvalidationPrice, setSimInvalidationPrice] = useState<string>('81500');
+  const [simTargetPrice, setSimTargetPrice] = useState<string>('92000');
+  const [simResult, setSimResult] = useState<PositionSimulationResult | null>(null);
+  const [simLoading, setSimLoading] = useState(false);
+
+  useEffect(() => {
+    if (!latestMarketScan && !isScanningMarket) {
+      runMarketIntelligenceScan({
+        horizon: filterHorizon === 'ALL' ? 'BREVE' : filterHorizon,
+      });
+    }
+  }, [latestMarketScan, isScanningMarket, runMarketIntelligenceScan, filterHorizon]);
+
+  const buildScanFilterParams = () => ({
+    assetClasses: filterClass === 'ALL' ? undefined : [filterClass],
+    horizon: filterHorizon === 'ALL' ? 'BREVE' : filterHorizon,
+    brokers: filterBroker === 'ALL' ? undefined : [filterBroker],
+    regimeFilter: filterDirectionalRegime,
+    volatilityFilter: filterVolatilityRegime,
+    breakoutOnly,
+    pullbackOnly,
+    onlyWatchlistOrPortfolio: onlyWatchlist,
+  });
+
   const handleRunScan = async () => {
     setScanning(true);
     try {
-      await triggerSchedulerNow();
+      await Promise.all([
+        triggerSchedulerNow(),
+        runMarketIntelligenceScan(buildScanFilterParams()),
+      ]);
     } finally {
       setScanning(false);
+    }
+  };
+
+  const handleRunSmartScannerOnly = async () => {
+    await runMarketIntelligenceScan(buildScanFilterParams());
+  };
+
+  const handleRunPositionSimulation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSimLoading(true);
+    try {
+      const inst = instruments.find((i) => i.id === simInstrumentId);
+      const res = await simulatePosition({
+        instrumentId: simInstrumentId,
+        capitalAllocatedInBase: Number(simCapital) || 1000,
+        totalPortfolioEquityInBase: Number(simPortfolioTotal) || 10000,
+        maxAcceptablePortfolioRiskPct: Number(simMaxRiskPct) || 1.5,
+        entryPrice: Number(simEntryPrice) || 100,
+        invalidationStopPrice: Number(simInvalidationPrice) || 95,
+        targetPrices: [Number(simTargetPrice) || 110],
+        spreadBps: inst?.assetClass === 'CRYPTO' ? 12 : 8,
+        slippageBps: 5,
+        commissionPct: 0.05,
+        fxRateToBase: 1,
+      });
+      if (res) setSimResult(res);
+    } finally {
+      setSimLoading(false);
     }
   };
 
@@ -87,16 +169,29 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
             </p>
           </div>
 
-          <button
-            type="button"
-            disabled={scanning}
-            onClick={handleRunScan}
-            data-testid="screener-scan-btn"
-            className="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-xs font-semibold text-anthracite-950 transition hover:bg-brand-400 disabled:opacity-50"
-          >
-            <Zap className="h-4 w-4" />
-            {scanning ? 'Valutazione Universo in corso...' : 'Valuta Universo & Aggiorna Segnali'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={isScanningMarket || scanning}
+              onClick={handleRunSmartScannerOnly}
+              data-testid="run-smart-scanner-btn"
+              className="flex items-center gap-2 rounded-xl border border-brand-500/40 bg-brand-500/15 px-3.5 py-2.5 text-xs font-semibold text-brand-300 transition hover:bg-brand-500/25 disabled:opacity-50"
+            >
+              <Radar className="h-4 w-4" />
+              {isScanningMarket ? 'Scansione V3...' : 'Esegui Smart Scanner V3'}
+            </button>
+
+            <button
+              type="button"
+              disabled={scanning}
+              onClick={handleRunScan}
+              data-testid="screener-scan-btn"
+              className="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-xs font-semibold text-anthracite-950 transition hover:bg-brand-400 disabled:opacity-50"
+            >
+              <Zap className="h-4 w-4" />
+              {scanning ? 'Valutazione Universo in corso...' : 'Valuta Universo & Aggiorna Segnali'}
+            </button>
+          </div>
         </div>
 
         {/* Griglia Filtri */}
@@ -195,6 +290,378 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
             </label>
           </div>
         </div>
+
+        {/* Filtri Avanzati Smart Market Scanner V3 (Regime, Volatilità, Breakout/Pullback) */}
+        <div className="mt-3 grid grid-cols-1 gap-3 border-t border-slate-200/70 pt-3 dark:border-slate-800 sm:grid-cols-4">
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase text-slate-400">
+              Regime Direzionale V3
+            </label>
+            <select
+              value={filterDirectionalRegime}
+              onChange={(e) =>
+                setFilterDirectionalRegime(e.target.value as DirectionalMarketRegime | 'ALL')
+              }
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
+            >
+              <option value="ALL">Tutti i Regimi Direzionali</option>
+              <option value="BULLISH_TREND">BULLISH_TREND</option>
+              <option value="BEARISH_TREND">BEARISH_TREND</option>
+              <option value="SIDEWAYS">SIDEWAYS</option>
+              <option value="UNCERTAIN">UNCERTAIN</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase text-slate-400">
+              Regime Volatilità V3
+            </label>
+            <select
+              value={filterVolatilityRegime}
+              onChange={(e) =>
+                setFilterVolatilityRegime(e.target.value as VolatilityMarketRegime | 'ALL')
+              }
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
+            >
+              <option value="ALL">Tutti i Regimi Volatilità</option>
+              <option value="LOW_VOLATILITY">LOW_VOLATILITY</option>
+              <option value="NORMAL_VOLATILITY">NORMAL_VOLATILITY</option>
+              <option value="HIGH_VOLATILITY">HIGH_VOLATILITY</option>
+            </select>
+          </div>
+
+          <div className="flex items-end">
+            <label className="flex w-full cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-anthracite-900">
+              <input
+                type="checkbox"
+                checked={breakoutOnly}
+                onChange={(e) => setBreakoutOnly(e.target.checked)}
+                className="accent-brand-500"
+              />
+              <span>Solo Breakout Confermati</span>
+            </label>
+          </div>
+
+          <div className="flex items-end">
+            <label className="flex w-full cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-anthracite-900">
+              <input
+                type="checkbox"
+                checked={pullbackOnly}
+                onChange={(e) => setPullbackOnly(e.target.checked)}
+                className="accent-brand-500"
+              />
+              <span>Solo Pullback in Trend</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {/* Smart Market Scanner V3 & Multi-Factor Opportunity Ranking */}
+      {latestMarketScan && (
+        <div
+          data-testid="smart-scanner-v3-panel"
+          className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850"
+        >
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Activity className="h-4 w-4 text-brand-400" />
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                Smart Market Scanner V3 — Ranking Multifattoriale (
+                {latestMarketScan.topRankedOpportunities.length} Opportunità /{' '}
+                {latestMarketScan.analyzedCount} Analizzati / {latestMarketScan.excludedCount}{' '}
+                Esclusi)
+              </h2>
+            </div>
+            <span className="font-mono text-[11px] text-slate-500">
+              Run: {latestMarketScan.runId} • Copertura: {latestMarketScan.coveragePct}%
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {latestMarketScan.topRankedOpportunities.map((item) => (
+              <div
+                key={item.instrumentId}
+                data-testid={`opportunity-ranking-card-${item.instrumentId}`}
+                className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-anthracite-900"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded bg-brand-500/20 px-2 py-0.5 font-mono text-xs font-bold text-brand-400">
+                      #{item.rank}
+                    </span>
+                    <span className="text-sm font-bold text-slate-900 dark:text-white">
+                      {item.instrumentName} ({item.instrumentTicker})
+                    </span>
+                    <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-bold text-emerald-400">
+                      {item.signalClassification}
+                    </span>
+                    <span className="rounded bg-slate-200 px-2 py-0.5 font-mono text-[10px] font-semibold dark:bg-slate-800">
+                      {item.strategyName} ({item.strategyId})
+                    </span>
+                    <span className="rounded bg-slate-200 px-2 py-0.5 font-mono text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                      Regime: {item.directionalRegime} • {item.volatilityRegime}
+                    </span>
+                    <span className="rounded bg-brand-500/10 px-2 py-0.5 font-mono text-[10px] text-brand-300">
+                      MTF: {item.multiTimeframeState}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="num-mono text-sm font-bold text-brand-400">
+                        Composite Score: {item.compositeScore}/100
+                      </div>
+                      <div className="font-mono text-[10px] text-slate-400">
+                        Completezza Dati: {item.dataCompletenessScore}/100 • Rischio:{' '}
+                        {item.riskBand}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onOpenInstrument(item.instrumentId)}
+                      className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-anthracite-950 hover:bg-brand-400"
+                    >
+                      Analizza
+                    </button>
+                  </div>
+                </div>
+
+                {item.sellDistinction !== 'NOT_APPLICABLE' && (
+                  <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-300">
+                    Distinzione Segnale Ribassista:{' '}
+                    {item.sellDistinction === 'EXISTING_POSITION_EXIT'
+                      ? 'Uscita da Posizione Esistente in Portafoglio (EXISTING_POSITION_EXIT)'
+                      : 'Segnale Tecnico Ribassista di Mercato — Non Short Automatico (BEARISH_MARKET_SIGNAL)'}
+                  </div>
+                )}
+
+                <div className="mt-2.5 grid grid-cols-1 gap-2 border-t border-slate-200/70 pt-2.5 text-[11px] dark:border-slate-800 sm:grid-cols-3">
+                  <div className="num-mono text-slate-300">
+                    <strong className="text-slate-400">Livelli Operativi:</strong> Prezzo{' '}
+                    {item.observedPrice} {item.currency} | Invalidazione:{' '}
+                    {item.invalidationPrice ?? 'N/D'} | Target:{' '}
+                    {item.targetLevels.map((t) => t.price).join(' → ') || 'N/D'}
+                  </div>
+                  <div className="text-slate-400">
+                    <strong className="text-emerald-400">Driver Positivi:</strong>{' '}
+                    {item.positiveDrivers.slice(0, 2).join(' • ')}
+                  </div>
+                  <div className="text-slate-400">
+                    <strong className="text-red-400">Rischi & Collinearità:</strong>{' '}
+                    {item.negativeRiskFactors[0] || 'Rischio ordinario'} (
+                    {item.collinearityNotes})
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {latestMarketScan.excludedInstruments.length > 0 && (
+            <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3.5 text-xs">
+              <div className="font-bold text-amber-400">
+                Strumenti Esclusi dallo Scanner per Controllo Qualità Dati (Fail-Safe Layer —{' '}
+                {latestMarketScan.excludedInstruments.length}):
+              </div>
+              <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {latestMarketScan.excludedInstruments.map((ex) => (
+                  <div
+                    key={ex.instrumentId}
+                    className="flex items-center justify-between rounded bg-anthracite-900 px-2.5 py-1.5 text-[11px]"
+                  >
+                    <span className="font-bold text-white">
+                      {ex.ticker} — {ex.name}
+                    </span>
+                    <span className="text-amber-300">
+                      [{ex.reasonCode}] {ex.detail}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Simulatore Interattivo di Posizione e Rischio (Sezione 10 Prompt 3) */}
+      <div
+        data-testid="position-simulator-card"
+        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850"
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Calculator className="h-4 w-4 text-brand-400" />
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+              Simulatore Interattivo di Posizione, Sizing & Rischio (Risk Intelligence V3)
+            </h2>
+          </div>
+          <span className="text-[11px] text-slate-500">
+            Calcolo deterministico comprensivo di spread, slippage e commissioni
+          </span>
+        </div>
+
+        <form
+          onSubmit={handleRunPositionSimulation}
+          className="grid grid-cols-1 gap-3 sm:grid-cols-4 lg:grid-cols-7"
+        >
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-[10px] font-bold uppercase text-slate-400">
+              Strumento
+            </label>
+            <select
+              value={simInstrumentId}
+              onChange={(e) => setSimInstrumentId(e.target.value)}
+              data-testid="sim-instrument-select"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
+            >
+              {instruments.map((inst) => (
+                <option key={inst.id} value={inst.id}>
+                  {inst.ticker} — {inst.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase text-slate-400">
+              Capitale Posizione
+            </label>
+            <input
+              type="number"
+              step="any"
+              value={simCapital}
+              onChange={(e) => setSimCapital(e.target.value)}
+              data-testid="sim-capital-input"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase text-slate-400">
+              Portafoglio Totale
+            </label>
+            <input
+              type="number"
+              step="any"
+              value={simPortfolioTotal}
+              onChange={(e) => setSimPortfolioTotal(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase text-slate-400">
+              Prezzo Ingresso
+            </label>
+            <input
+              type="number"
+              step="any"
+              value={simEntryPrice}
+              onChange={(e) => setSimEntryPrice(e.target.value)}
+              data-testid="sim-entry-input"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase text-slate-400">
+              Stop Invalidazione
+            </label>
+            <input
+              type="number"
+              step="any"
+              value={simInvalidationPrice}
+              onChange={(e) => setSimInvalidationPrice(e.target.value)}
+              data-testid="sim-stop-input"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase text-slate-400">
+              Target Prezzo
+            </label>
+            <div className="flex gap-1.5">
+              <input
+                type="number"
+                step="any"
+                value={simTargetPrice}
+                onChange={(e) => setSimTargetPrice(e.target.value)}
+                data-testid="sim-target-input"
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
+              />
+              <button
+                type="submit"
+                disabled={simLoading}
+                data-testid="run-position-simulation-btn"
+                className="shrink-0 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-anthracite-950 hover:bg-brand-400"
+              >
+                Simula
+              </button>
+            </div>
+          </div>
+        </form>
+
+        {simResult && (
+          <div
+            data-testid="position-simulation-result"
+            className="mt-4 grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-800 dark:bg-anthracite-900 sm:grid-cols-4"
+          >
+            <div>
+              <div className="text-[10px] uppercase text-slate-400">Unità & Costi Roundtrip</div>
+              <div className="num-mono mt-1 font-bold text-white">
+                {simResult.positionUnits} unità ({simResult.grossExposureInBase} EUR)
+              </div>
+              <div className="mt-0.5 text-[11px] text-slate-400">
+                Costi (Spread+Slip+Comm): {simResult.totalRoundtripCostsInBase} EUR
+              </div>
+            </div>
+
+            <div>
+              <div className="text-[10px] uppercase text-slate-400">
+                Perdita Max a Invalidazione
+              </div>
+              <div className="num-mono mt-1 font-bold text-red-400">
+                -{simResult.maxLossAtInvalidationInBase} EUR (
+                {simResult.portfolioCapitalAtRiskPct}% del Portafoglio)
+              </div>
+              <div className="mt-0.5 text-[11px] text-slate-400">
+                Impatto su posizione: {simResult.maxLossPctOfPosition}%
+              </div>
+            </div>
+
+            <div>
+              <div className="text-[10px] uppercase text-slate-400">
+                Profitto Netto & R/R Target
+              </div>
+              <div className="num-mono mt-1 font-bold text-emerald-400">
+                +{simResult.targetsSimulation[0]?.netProfitInBase ?? 0} EUR | R/R Netto:{' '}
+                {simResult.targetsSimulation[0]?.riskRewardRatio ?? 'N/D'}:1
+              </div>
+              <div className="mt-0.5 text-[11px] text-slate-400">
+                Rendimento Netto Target: {simResult.targetsSimulation[0]?.netReturnPct ?? 0}%
+              </div>
+            </div>
+
+            <div>
+              <div className="text-[10px] uppercase text-slate-400">
+                Sizing Consigliato per Budget Rischio ({simMaxRiskPct}%)
+              </div>
+              <div className="num-mono mt-1 font-bold text-brand-400">
+                Max Capitale: {simResult.recommendedMaxCapitalInBase} EUR (
+                {simResult.recommendedMaxPositionUnits} unità)
+              </div>
+              <div className="mt-0.5 text-[11px]">
+                {!simResult.exceedsMaxRiskThreshold ? (
+                  <span className="text-emerald-400">Entro il budget di rischio</span>
+                ) : (
+                  <span className="text-amber-400">
+                    Eccede il rischio max ({simResult.warnings[0]})
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Opportunity Ranking & Storico Segnali Deterministici */}
@@ -381,3 +848,4 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
     </div>
   );
 };
+

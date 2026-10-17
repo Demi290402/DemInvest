@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useDemInvest } from '../context/DemInvestContext';
 import {
+  AnalyzedInstrumentIntelligenceItem,
   AssetClass,
   CandleTimeframe,
   GeneratedSignal,
@@ -24,6 +25,7 @@ import {
   TimeHorizon,
 } from '../types/domain';
 import { DEFAULT_TIME_HORIZON_CONFIGS } from '../engines/signalIntelligenceEngine';
+import { detectMarketRegime } from '../engines/marketIntelligenceEngine';
 import { TradingViewChart } from '../components/TradingViewChart';
 
 export const MarketsView: React.FC = () => {
@@ -61,6 +63,8 @@ export const MarketsView: React.FC = () => {
   const [detailIndicators, setDetailIndicators] =
     useState<QuantitativeIndicatorsSnapshot | null>(null);
   const [detailSignal, setDetailSignal] = useState<GeneratedSignal | null>(null);
+  const [detailIntelligence, setDetailIntelligence] =
+    useState<AnalyzedInstrumentIntelligenceItem | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   // Alert quick creation state
@@ -91,13 +95,20 @@ export const MarketsView: React.FC = () => {
       const url = `/api/market/instrument-analysis?instrumentId=${encodeURIComponent(
         currentInstrument.id
       )}&timeframe=${timeframe}&horizon=${activeHorizon}&brokerCode=${selectedBrokerCode}&mode=${dataExecutionMode}`;
-      const res = await fetch(url);
+      const intelUrl = `/api/intelligence/analyze-instrument?instrumentId=${encodeURIComponent(
+        currentInstrument.id
+      )}&timeframe=${timeframe}&horizon=${activeHorizon}&mode=${dataExecutionMode}`;
+      const [res, intelRes] = await Promise.all([fetch(url), fetch(intelUrl)]);
       if (res.ok) {
         const data = await res.json();
         setDetailQuote(data.quote);
         setDetailCandles(data.candles || []);
         setDetailIndicators(data.indicators);
         setDetailSignal(data.signalEvaluation);
+      }
+      if (intelRes.ok) {
+        const intelData = await intelRes.json();
+        setDetailIntelligence(intelData.intelligence || intelData.analysis || null);
       }
     } finally {
       setLoadingDetail(false);
@@ -468,16 +479,85 @@ export const MarketsView: React.FC = () => {
             {/* Analisi Tecnica: Vista Semplice vs Vista Pro */}
             {detailIndicators && (
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
-                <div className="mb-3 flex items-center justify-between">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
                     {uiMode === 'SIMPLE'
                       ? 'Spiegazione Guidata Indicatori & Orizzonte (Vista Semplice)'
                       : 'Motore Quantitativo Deterministico (Vista Pro)'}
                   </h3>
-                  <span className="font-mono text-xs text-slate-500">
-                    Osservazioni chiuse: {detailIndicators.observationsCount}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-slate-500">
+                    <span>Osservazioni chiuse: {detailIndicators.observationsCount}</span>
+                    {detailIntelligence?.dataQuality && (
+                      <span
+                        data-testid="market-data-quality-badge"
+                        className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                          detailIntelligence.dataQuality.classification === 'VALID'
+                            ? 'bg-emerald-500/15 text-emerald-400'
+                            : 'bg-amber-500/15 text-amber-400'
+                        }`}
+                      >
+                        Data Quality: {detailIntelligence.dataQuality.classification} (
+                        {detailIntelligence.dataQuality.validClosedCandlesCount} barre chiuse)
+                      </span>
+                    )}
+                  </div>
                 </div>
+
+                {/* Market Regime Detection V3 & Multi-Timeframe Consensus */}
+                {(() => {
+                  const effectiveRegime =
+                    detailIntelligence?.regime ||
+                    (detailIndicators ? detectMarketRegime(detailIndicators) : null);
+                  if (!effectiveRegime) return null;
+                  return (
+                    <div
+                      data-testid="market-regime-panel"
+                      className="mb-4 grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs dark:border-slate-800 dark:bg-anthracite-900 sm:grid-cols-3"
+                    >
+                      <div>
+                        <div className="text-[10px] font-bold uppercase text-slate-400">
+                          Regime Direzionale
+                        </div>
+                        <div className="mt-0.5 font-mono text-xs font-bold text-brand-400">
+                          {effectiveRegime.directionalRegime}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">
+                          {effectiveRegime.explanation}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold uppercase text-slate-400">
+                          Regime di Volatilità
+                        </div>
+                        <div className="mt-0.5 font-mono text-xs font-bold text-slate-900 dark:text-white">
+                          {effectiveRegime.volatilityRegime}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">
+                          {detailIntelligence
+                            ? `Fascia Rischio: ${detailIntelligence.riskReport.riskBand} (Score ${detailIntelligence.riskReport.overallRiskScore}/100)`
+                            : `Confidenza Regime: ${effectiveRegime.regimeConfidenceScore}/100`}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold uppercase text-slate-400">
+                          {detailIntelligence
+                            ? `Coerenza Multi-Timeframe (${detailIntelligence.multiTimeframe.operationalTimeframe} → ${detailIntelligence.multiTimeframe.higherConfirmationTimeframe})`
+                            : 'Allineamento Strutturale Medie'}
+                        </div>
+                        <div className="mt-0.5 font-mono text-xs font-bold text-emerald-400">
+                          {detailIntelligence
+                            ? detailIntelligence.multiTimeframe.consensusState
+                            : effectiveRegime.maAlignment}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">
+                          {detailIntelligence
+                            ? detailIntelligence.multiTimeframe.summary
+                            : `Compatibile con: ${effectiveRegime.compatibleStrategies.join(', ')}`}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {!detailIndicators.sufficientData ? (
                   <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-300">
@@ -526,7 +606,8 @@ export const MarketsView: React.FC = () => {
                           {detailIndicators.sma20 ?? 'N/D'} / {detailIndicators.sma50 ?? 'N/D'}
                         </div>
                         <div className="mt-0.5 text-[10px] text-slate-400">
-                          Dist. SMA20: {detailIndicators.distanceFromSma20Pct ?? 0}%
+                          Dist. SMA20: {detailIndicators.distanceFromSma20Pct ?? 0}% | Slope:{' '}
+                          {detailIndicators.sma20SlopeNormalizedPct ?? 0}%
                         </div>
                       </div>
 
@@ -539,7 +620,8 @@ export const MarketsView: React.FC = () => {
                           {detailIndicators.stochastic14?.k ?? 'N/D'}
                         </div>
                         <div className="mt-0.5 text-[10px] text-slate-400">
-                          ROC(10): {detailIndicators.roc10 ?? 0}%
+                          ROC(10): {detailIndicators.roc10 ?? 0}% | Mom(10):{' '}
+                          {detailIndicators.momentum10 ?? 'N/D'}
                         </div>
                       </div>
 
@@ -551,7 +633,8 @@ export const MarketsView: React.FC = () => {
                           Hist: {detailIndicators.macd?.histogram ?? 'N/D'}
                         </div>
                         <div className="mt-0.5 text-[10px] text-slate-400">
-                          ADX Forza Trend: {detailIndicators.adx14 ?? 'N/D'}
+                          ADX: {detailIndicators.adx14 ?? 'N/D'} (+DI {detailIndicators.plusDi14 ?? 'N/D'}{' '}
+                          / -DI {detailIndicators.minusDi14 ?? 'N/D'})
                         </div>
                       </div>
 
@@ -569,7 +652,7 @@ export const MarketsView: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Supporti e Resistenze Frattali */}
+                    {/* Supporti e Resistenze Frattali + Pivot Confermati */}
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs">
                         <div className="font-bold text-emerald-400">
@@ -611,6 +694,44 @@ export const MarketsView: React.FC = () => {
                         )}
                       </div>
                     </div>
+
+                    {/* Pivot High / Low Confermati (Zero Look-Ahead Bias) */}
+                    {((detailIndicators.confirmedPivotHighs &&
+                      detailIndicators.confirmedPivotHighs.length > 0) ||
+                      (detailIndicators.confirmedPivotLows &&
+                        detailIndicators.confirmedPivotLows.length > 0)) && (
+                      <div className="rounded-lg border border-slate-800 bg-anthracite-900 p-3 text-xs">
+                        <div className="font-bold text-brand-400">
+                          Pivot Strutturali Confermati (Zero Look-Ahead Bias — 2 Candele Destre Chiuse):
+                        </div>
+                        <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                          {[
+                            ...(detailIndicators.confirmedPivotHighs || []),
+                            ...(detailIndicators.confirmedPivotLows || []),
+                          ]
+                            .slice(-4)
+                            .map((piv, idx) => (
+                              <div
+                                key={idx}
+                                className="num-mono flex items-center justify-between rounded bg-anthracite-950 px-2.5 py-1 text-[11px]"
+                              >
+                                <span
+                                  className={
+                                    piv.type === 'PIVOT_HIGH' ? 'text-amber-400' : 'text-emerald-400'
+                                  }
+                                >
+                                  {piv.type}: {piv.price}
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                  Conf. +{piv.rightBars} barre{' '}
+                                  {piv.broken ? '• ROTTO' : '• ATTIVO'}
+                                  {piv.falseBreakoutDetected ? ' (Falso Breakout)' : ''}
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -655,6 +776,34 @@ export const MarketsView: React.FC = () => {
                 <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-700 dark:bg-anthracite-900 dark:text-slate-300">
                   {detailSignal.quantitativeRationale}
                 </p>
+
+                {detailIntelligence?.bestStrategySetup && (
+                  <div className="mt-3 rounded-lg border border-brand-500/25 bg-brand-500/5 p-3 text-[11px]">
+                    <div className="flex items-center justify-between font-bold text-brand-400">
+                      <span>
+                        Strategia V3: {detailIntelligence.bestStrategySetup.strategyName} (v
+                        {detailIntelligence.bestStrategySetup.strategyVersion})
+                      </span>
+                      <span>{detailIntelligence.bestStrategySetup.signalClassification}</span>
+                    </div>
+                    {detailIntelligence.bestStrategySetup.sellDistinction !== 'NOT_APPLICABLE' && (
+                      <div className="mt-1 font-semibold text-amber-300">
+                        Distinzione Segnale Ribassista:{' '}
+                        {detailIntelligence.bestStrategySetup.sellDistinction ===
+                        'EXISTING_POSITION_EXIT'
+                          ? 'Uscita da Posizione Esistente in Portafoglio'
+                          : 'Segnale Tecnico Ribassista di Mercato (Non Short Automatico)'}
+                      </div>
+                    )}
+                    <div className="num-mono mt-1 text-slate-300">
+                      Invalidazione: {detailIntelligence.bestStrategySetup.invalidationPrice ?? 'N/D'}{' '}
+                      | Target:{' '}
+                      {detailIntelligence.bestStrategySetup.targetLevels
+                        .map((t) => t.price)
+                        .join(' → ') || 'N/D'}
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-3 space-y-2 text-xs">
                   <div>

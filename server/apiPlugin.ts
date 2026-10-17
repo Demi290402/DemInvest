@@ -7,18 +7,23 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 import './nodePlatformBridge';
 import {
+  analyzeBackendInstrumentIntelligence,
+  applyIncomingSupabaseHeaders,
   dispatchNotificationAndWebPush,
+  executeBackendSmartMarketScan,
   fetchLiveFxRatesToBase,
   getDbState,
   getHistoricalCandlesForInstrument,
   getMarketQuoteForInstrument,
   getOrInitVapidKeys,
   getProvidersHealthDashboard,
+  getQuantitativeStrategiesCatalogV3,
   getSupabaseDiagnosticsSnapshot,
   processContextualAiChat,
   pullStateFromSupabaseIfConfigured,
   pushStateToSupabaseIfConfigured,
   registerCoinGeckoInstrumentInCatalog,
+  runBackendPositionSimulation,
   runBackendSchedulerCycle,
   saveDbState,
   saveRuntimeSecret,
@@ -41,7 +46,9 @@ import {
   CandleTimeframe,
   DataExecutionMode,
   MarketQuote,
+  MarketScanFilterParams,
   PortfolioTransaction,
+  PositionSimulationInput,
   TimeHorizon,
 } from '../src/types/domain';
 
@@ -111,6 +118,7 @@ export function demInvestBackendPlugin(): Plugin {
     const method = req.method || 'GET';
 
     try {
+      applyIncomingSupabaseHeaders(req.headers);
       await pullStateFromSupabaseIfConfigured();
       const db = getDbState();
 
@@ -194,7 +202,7 @@ export function demInvestBackendPlugin(): Plugin {
           },
         };
         db.activeSessionToken = token;
-        saveDbState(db);
+        saveDbState(db, true);
         const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(db, {
           plainPassword: password,
         });
@@ -213,6 +221,36 @@ export function demInvestBackendPlugin(): Plugin {
 
         if (!db.ownerAccount) {
           await pullStateFromSupabaseIfConfigured(true);
+        }
+
+        if (!db.ownerAccount && email.includes('@') && password.length >= 8) {
+          const displayName =
+            email.split('@')[0]?.replace(/[._-]/g, ' ') || 'Investitore Proprietario';
+          db.ownerAccount = {
+            passwordHash: hashPassword(password),
+            user: {
+              id: 'OWNER_USER_01',
+              email,
+              displayName,
+              isOwner: true,
+              onboardingCompleted: true,
+              uiMode: 'SIMPLE',
+              theme: 'DARK',
+              dataExecutionMode: 'LIVE',
+              preferredCurrency: 'EUR',
+              timezone: 'Europe/Rome',
+              experienceLevel: 'INTERMEDIATE',
+              riskTolerance: 'MODERATE',
+              investmentGoals: ['CAPITAL_GROWTH', 'RISK_CONTROL'],
+              preferredHorizons: ['BREVE', 'MEDIO', 'LUNGO'],
+              preferredMarkets: ['CRYPTO', 'EQUITY', 'ETF'],
+              selectedBrokers: ['TRADE_REPUBLIC', 'IBKR', 'AVATRADE', 'MT5'],
+              quietHoursStart: '22:30',
+              quietHoursEnd: '07:30',
+              maxDailyNotifications: 15,
+              createdAt: new Date().toISOString(),
+            },
+          };
         }
 
         if (!db.ownerAccount) {
@@ -242,7 +280,7 @@ export function demInvestBackendPlugin(): Plugin {
 
         const token = crypto.randomBytes(24).toString('hex');
         db.activeSessionToken = token;
-        saveDbState(db);
+        saveDbState(db, true);
         const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(db, {
           plainPassword: password,
         });
@@ -779,8 +817,46 @@ export function demInvestBackendPlugin(): Plugin {
       if (pathname === '/api/supabase/reconcile' && method === 'POST') {
         const body = await readJsonBody(req);
         const plainPassword = body.password ? String(body.password) : undefined;
+        const fallbackEmail = body.email ? String(body.email).trim().toLowerCase() : undefined;
+        const fallbackDisplayName = body.displayName
+          ? String(body.displayName).trim()
+          : 'Investitore Proprietario';
+
         await pullStateFromSupabaseIfConfigured(true);
         const currentDb = getDbState();
+        if (!currentDb.ownerAccount && fallbackEmail && fallbackEmail.includes('@')) {
+          currentDb.ownerAccount = {
+            passwordHash: plainPassword
+              ? hashPassword(plainPassword)
+              : 'SUPABASE_AUTH_MANAGED',
+            user: {
+              id: 'OWNER_USER_01',
+              email: fallbackEmail,
+              displayName: fallbackDisplayName,
+              isOwner: true,
+              onboardingCompleted: true,
+              uiMode: 'SIMPLE',
+              theme: 'DARK',
+              dataExecutionMode: 'LIVE',
+              preferredCurrency: 'EUR',
+              timezone: 'Europe/Rome',
+              experienceLevel: 'INTERMEDIATE',
+              riskTolerance: 'MODERATE',
+              investmentGoals: ['CAPITAL_GROWTH', 'RISK_CONTROL'],
+              preferredHorizons: ['BREVE', 'MEDIO', 'LUNGO'],
+              preferredMarkets: ['CRYPTO', 'EQUITY', 'ETF'],
+              selectedBrokers: ['TRADE_REPUBLIC', 'IBKR', 'AVATRADE', 'MT5'],
+              quietHoursStart: '22:30',
+              quietHoursEnd: '07:30',
+              maxDailyNotifications: 15,
+              createdAt: new Date().toISOString(),
+            },
+          };
+          if (!currentDb.activeSessionToken) {
+            currentDb.activeSessionToken = crypto.randomBytes(24).toString('hex');
+          }
+          saveDbState(currentDb, true);
+        }
         const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(currentDb, {
           plainPassword,
         });
@@ -789,6 +865,46 @@ export function demInvestBackendPlugin(): Plugin {
           supabaseDiagnostics,
           user: currentDb.ownerAccount?.user || null,
         });
+      }
+
+      // 13. ADVANCED MARKET INTELLIGENCE V3 ENDPOINTS
+      if (pathname === '/api/intelligence/strategies' && method === 'GET') {
+        return sendJson(res, 200, getQuantitativeStrategiesCatalogV3());
+      }
+
+      if (pathname === '/api/intelligence/analyze-instrument' && method === 'GET') {
+        const instrumentId = urlObj.searchParams.get('instrumentId') || 'INST_BTC_USD_SPOT';
+        const horizon = (urlObj.searchParams.get('horizon') || 'BREVE') as TimeHorizon;
+        const timeframe = (urlObj.searchParams.get('timeframe') || undefined) as
+          | CandleTimeframe
+          | undefined;
+        const mode = (urlObj.searchParams.get('mode') === 'DEMO' ? 'DEMO' : 'LIVE') as DataExecutionMode;
+        const item = await analyzeBackendInstrumentIntelligence({
+          instrumentId,
+          horizon,
+          timeframe,
+          mode,
+        });
+        if (!item) {
+          return sendJson(res, 404, { error: 'Strumento non trovato nel registro.' });
+        }
+        return sendJson(res, 200, { intelligence: item, analysis: item });
+      }
+
+      if (pathname === '/api/intelligence/scan' && method === 'POST') {
+        const body = await readJsonBody(req);
+        const filters = (body.filters || {}) as MarketScanFilterParams;
+        const mode = (body.mode === 'DEMO' ? 'DEMO' : 'LIVE') as DataExecutionMode;
+        const scanResult = await executeBackendSmartMarketScan({ filters, mode });
+        return sendJson(res, 200, { scanResult });
+      }
+
+      if (pathname === '/api/intelligence/simulate-position' && method === 'POST') {
+        const body = await readJsonBody(req);
+        const simulation = runBackendPositionSimulation(
+          body as unknown as PositionSimulationInput
+        );
+        return sendJson(res, 200, { simulation });
       }
 
       return sendJson(res, 404, { error: `Endpoint API ${pathname} non trovato.` });
@@ -810,3 +926,4 @@ export function demInvestBackendPlugin(): Plugin {
     },
   };
 }
+

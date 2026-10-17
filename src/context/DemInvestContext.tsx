@@ -7,11 +7,15 @@ import {
   DataExecutionMode,
   GeneratedSignal,
   MarketQuote,
+  MarketScanFilterParams,
+  MarketScanRunResult,
   NegotiableInstrument,
   NotificationItem,
   PaperAccountState,
   PortfolioAnalyticsSummary,
   PortfolioTransaction,
+  PositionSimulationInput,
+  PositionSimulationResult,
   ProviderHealthInfo,
   SchedulerStatusInfo,
   SupabaseSyncDiagnostics,
@@ -27,7 +31,99 @@ import {
   INITIAL_UNDERLYING_ASSETS,
 } from '../engines/instrumentRegistry';
 import { FxRateTable } from '../engines/portfolioEngine';
-import { getOrInitFrontendSupabaseClient } from '../lib/supabaseClient';
+import {
+  getActiveFrontendSupabaseConfig,
+  getOrInitFrontendSupabaseClient,
+  saveFrontendSupabaseAnonKey,
+} from '../lib/supabaseClient';
+
+const OWNER_SESSION_STORAGE_KEY = 'deminvest_owner_session_v1';
+
+function normalizeEmailForSupabaseGoTrue(rawEmail: string): string {
+  const clean = rawEmail.trim().toLowerCase();
+  if (clean.endsWith('.local')) {
+    return clean.replace(/\.local$/, '.com');
+  }
+  return clean;
+}
+
+function buildSupabaseHeaders(extra?: Record<string, string>): Record<string, string> {
+  const cfg = getActiveFrontendSupabaseConfig();
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (cfg.url) headers['x-deminvest-supabase-url'] = cfg.url;
+  if (cfg.anonKey) headers['x-deminvest-supabase-anon-key'] = cfg.anonKey;
+  return headers;
+}
+
+async function syncOwnerToSupabaseFromBrowser(
+  email: string,
+  password: string,
+  userProfile: UserProfileAndPreferences
+): Promise<void> {
+  const sbClient = getOrInitFrontendSupabaseClient();
+  if (!sbClient) return;
+
+  const sbEmail = normalizeEmailForSupabaseGoTrue(email);
+  try {
+    let authUserId: string | null = null;
+    const signInRes = await sbClient.auth.signInWithPassword({
+      email: sbEmail,
+      password,
+    });
+    if (signInRes.data?.user?.id) {
+      authUserId = signInRes.data.user.id;
+    } else {
+      const signUpRes = await sbClient.auth.signUp({
+        email: sbEmail,
+        password,
+        options: {
+          data: {
+            display_name: userProfile.displayName,
+            is_owner: true,
+          },
+        },
+      });
+      if (signUpRes.data?.user?.id) {
+        authUserId = signUpRes.data.user.id;
+      }
+    }
+
+    if (authUserId) {
+      await sbClient.from('profiles').upsert(
+        {
+          id: authUserId,
+          email: sbEmail,
+          display_name: userProfile.displayName,
+          is_owner: true,
+          onboarding_completed: userProfile.onboardingCompleted,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      );
+      await sbClient.from('user_preferences').upsert(
+        {
+          user_id: authUserId,
+          ui_mode: userProfile.uiMode,
+          theme: userProfile.theme,
+          preferred_currency: userProfile.preferredCurrency,
+          timezone: userProfile.timezone,
+          experience_level: userProfile.experienceLevel,
+          risk_tolerance: userProfile.riskTolerance,
+          investment_goals: userProfile.investmentGoals,
+          preferred_horizons: userProfile.preferredHorizons,
+          preferred_markets: userProfile.preferredMarkets,
+          quiet_hours_start: userProfile.quietHoursStart,
+          quiet_hours_end: userProfile.quietHoursEnd,
+          max_daily_notifications: userProfile.maxDailyNotifications,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' }
+      );
+    }
+  } catch {
+    // Sincronizzazione gestita anche lato server via REST
+  }
+}
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -83,6 +179,8 @@ interface DemInvestContextValue {
   supabaseDiagnostics: SupabaseSyncDiagnostics | null;
   vapidPublicKey: string;
   pushPermissionState: NotificationPermission | 'unsupported';
+  latestMarketScan: MarketScanRunResult | null;
+  isScanningMarket: boolean;
   // Actions
   setUiMode: (mode: UIMode) => Promise<void>;
   setTheme: (theme: ThemeMode) => Promise<void>;
@@ -148,6 +246,12 @@ interface DemInvestContextValue {
     email?: string;
     displayName?: string;
   }) => Promise<{ ok: boolean; diagnostics: SupabaseSyncDiagnostics | null }>;
+  runMarketIntelligenceScan: (
+    filters?: MarketScanFilterParams
+  ) => Promise<MarketScanRunResult | null>;
+  simulatePosition: (
+    input: PositionSimulationInput
+  ) => Promise<PositionSimulationResult | null>;
 }
 
 const DemInvestContext = createContext<DemInvestContextValue | undefined>(undefined);
@@ -156,7 +260,9 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isLoading, setIsLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [singleUserMode, setSingleUserMode] = useState(true);
-  const [hasOwnerAccount, setHasOwnerAccount] = useState(false);
+  const [hasOwnerAccount, setHasOwnerAccount] = useState(() => {
+    return Boolean(localStorage.getItem(OWNER_SESSION_STORAGE_KEY));
+  });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<UserProfileAndPreferences | null>(null);
 
@@ -203,6 +309,8 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [pushPermissionState, setPushPermissionState] = useState<
     NotificationPermission | 'unsupported'
   >(() => ('Notification' in window ? Notification.permission : 'unsupported'));
+  const [latestMarketScan, setLatestMarketScan] = useState<MarketScanRunResult | null>(null);
+  const [isScanningMarket, setIsScanningMarket] = useState(false);
 
   // Sincronizza classe dark/light sul documento
   useEffect(() => {
@@ -231,7 +339,9 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     async (overrideMode?: DataExecutionMode) => {
       const modeToUse = overrideMode || dataExecutionMode;
       try {
-        const res = await fetch(`/api/market/batch-quotes?mode=${modeToUse}`);
+        const res = await fetch(`/api/market/batch-quotes?mode=${modeToUse}`, {
+          headers: buildSupabaseHeaders(),
+        });
         if (!res.ok) return;
         const data = await res.json();
         if (data.quotes) setQuotes(data.quotes);
@@ -248,18 +358,59 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const loadBootstrap = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/bootstrap');
+      const res = await fetch('/api/bootstrap', {
+        headers: buildSupabaseHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         setSingleUserMode(Boolean(data.singleUserMode));
-        setHasOwnerAccount(Boolean(data.hasOwnerAccount));
-        setIsAuthenticated(Boolean(data.isAuthenticated));
-        if (data.user) {
+
+        // Ripristino automatico della sessione proprietaria se l'isolate Cloudflare Edge si è riavviato
+        const cachedRaw = localStorage.getItem(OWNER_SESSION_STORAGE_KEY);
+        let cachedSession: { user?: UserProfileAndPreferences } | null = null;
+        if (cachedRaw) {
+          try {
+            cachedSession = JSON.parse(cachedRaw);
+          } catch {
+            cachedSession = null;
+          }
+        }
+
+        if (data.isAuthenticated && data.user) {
+          setHasOwnerAccount(true);
+          setIsAuthenticated(true);
           setUser(data.user);
           setUiModeState(data.user.uiMode || 'SIMPLE');
           setThemeState(data.user.theme || 'DARK');
           setDataExecutionModeState(data.user.dataExecutionMode || 'LIVE');
+          localStorage.setItem(
+            OWNER_SESSION_STORAGE_KEY,
+            JSON.stringify({ user: data.user, updatedAt: new Date().toISOString() })
+          );
+        } else if (cachedSession?.user && cachedSession.user.onboardingCompleted) {
+          // Auto-reidratazione trasparente dopo cold-start dell'isolate Cloudflare Worker
+          setHasOwnerAccount(true);
+          setIsAuthenticated(true);
+          setUser(cachedSession.user);
+          setUiModeState(cachedSession.user.uiMode || 'SIMPLE');
+          setThemeState(cachedSession.user.theme || 'DARK');
+          setDataExecutionModeState(cachedSession.user.dataExecutionMode || 'LIVE');
+          void fetch('/api/supabase/reconcile', {
+            method: 'POST',
+            headers: buildSupabaseHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({
+              email: cachedSession.user.email,
+              displayName: cachedSession.user.displayName,
+            }),
+          }).catch(() => null);
+        } else {
+          setHasOwnerAccount(Boolean(data.hasOwnerAccount || cachedSession?.user));
+          setIsAuthenticated(Boolean(data.isAuthenticated));
+          if (data.user) {
+            setUser(data.user);
+          }
         }
+
         if (data.assets) setAssets(data.assets);
         if (data.instruments) setInstruments(data.instruments);
         if (data.brokerMappings) setBrokerMappings(data.brokerMappings);
@@ -297,12 +448,16 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const updateUserProfile = async (patch: Partial<UserProfileAndPreferences>) => {
     const res = await fetch('/api/profile/update', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildSupabaseHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(patch),
     });
     if (res.ok) {
       const data = await res.json();
       setUser(data.user);
+      localStorage.setItem(
+        OWNER_SESSION_STORAGE_KEY,
+        JSON.stringify({ user: data.user, updatedAt: new Date().toISOString() })
+      );
       if (data.supabaseDiagnostics) {
         setSupabaseDiagnostics(data.supabaseDiagnostics);
       }
@@ -339,60 +494,57 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     password: string;
     displayName: string;
   }) => {
+    const normalizedEmail = normalizeEmailForSupabaseGoTrue(params.email);
     const res = await fetch('/api/auth/register', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+      headers: buildSupabaseHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ ...params, email: normalizedEmail }),
     });
     const data = await res.json();
     if (!res.ok) {
       return { ok: false, error: data.error || 'Errore di registrazione' };
     }
-    const sbClient = getOrInitFrontendSupabaseClient();
-    if (sbClient) {
-      await sbClient.auth
-        .signUp({
-          email: params.email.trim().toLowerCase(),
-          password: params.password,
-          options: { data: { display_name: params.displayName, is_owner: true } },
-        })
-        .catch(() => null);
-    }
+    await syncOwnerToSupabaseFromBrowser(normalizedEmail, params.password, data.user);
     setHasOwnerAccount(true);
     setIsAuthenticated(true);
     setUser(data.user);
+    localStorage.setItem(
+      OWNER_SESSION_STORAGE_KEY,
+      JSON.stringify({ user: data.user, updatedAt: new Date().toISOString() })
+    );
     if (data.supabaseDiagnostics) setSupabaseDiagnostics(data.supabaseDiagnostics);
     return { ok: true };
   };
 
   const loginOwner = async (params: { email: string; password: string }) => {
+    const normalizedEmail = normalizeEmailForSupabaseGoTrue(params.email);
     const res = await fetch('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+      headers: buildSupabaseHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ ...params, email: normalizedEmail }),
     });
     const data = await res.json();
     if (!res.ok) {
       return { ok: false, error: data.error || 'Credenziali non valide' };
     }
-    const sbClient = getOrInitFrontendSupabaseClient();
-    if (sbClient) {
-      await sbClient.auth
-        .signInWithPassword({
-          email: params.email.trim().toLowerCase(),
-          password: params.password,
-        })
-        .catch(() => null);
-    }
+    await syncOwnerToSupabaseFromBrowser(normalizedEmail, params.password, data.user);
     setHasOwnerAccount(true);
     setIsAuthenticated(true);
     setUser(data.user);
+    localStorage.setItem(
+      OWNER_SESSION_STORAGE_KEY,
+      JSON.stringify({ user: data.user, updatedAt: new Date().toISOString() })
+    );
     if (data.supabaseDiagnostics) setSupabaseDiagnostics(data.supabaseDiagnostics);
     return { ok: true };
   };
 
   const logoutOwner = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: buildSupabaseHeaders(),
+    });
+    localStorage.removeItem(OWNER_SESSION_STORAGE_KEY);
     setIsAuthenticated(false);
     setUser(null);
   };
@@ -686,9 +838,12 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const saveBackendProviderKey = async (keyName: string, secretValue: string) => {
+    if (keyName === 'SUPABASE_ANON_KEY' && secretValue.trim()) {
+      saveFrontendSupabaseAnonKey(secretValue.trim());
+    }
     const res = await fetch('/api/settings/provider-key', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildSupabaseHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ keyName, secretValue }),
     });
     if (res.ok) {
@@ -702,7 +857,7 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const reconcileSupabaseNow: DemInvestContextValue['reconcileSupabaseNow'] = async (params) => {
     const res = await fetch('/api/supabase/reconcile', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildSupabaseHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         password: params?.password,
         email: params?.email || user?.email,
@@ -721,6 +876,52 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setHasOwnerAccount(true);
     }
     return { ok: true, diagnostics: data.supabaseDiagnostics || null };
+  };
+
+  const runMarketIntelligenceScan: DemInvestContextValue['runMarketIntelligenceScan'] = useCallback(
+    async (filters?: MarketScanFilterParams) => {
+      setIsScanningMarket(true);
+      try {
+        const res = await fetch('/api/intelligence/scan', {
+          method: 'POST',
+          headers: buildSupabaseHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            filters: {
+              horizon: activeHorizon,
+              ...(filters || {}),
+            },
+            mode: dataExecutionMode,
+          }),
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (data.scanResult) {
+          setLatestMarketScan(data.scanResult);
+          return data.scanResult as MarketScanRunResult;
+        }
+        return null;
+      } catch {
+        return null;
+      } finally {
+        setIsScanningMarket(false);
+      }
+    },
+    [activeHorizon, dataExecutionMode]
+  );
+
+  const simulatePosition: DemInvestContextValue['simulatePosition'] = async (input) => {
+    try {
+      const res = await fetch('/api/intelligence/simulate-position', {
+        method: 'POST',
+        headers: buildSupabaseHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data.simulation as PositionSimulationResult) || null;
+    } catch {
+      return null;
+    }
   };
 
   return (
@@ -759,6 +960,8 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         supabaseDiagnostics,
         vapidPublicKey,
         pushPermissionState,
+        latestMarketScan,
+        isScanningMarket,
         setUiMode,
         setTheme,
         setDataExecutionMode,
@@ -791,6 +994,8 @@ export const DemInvestProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         sendAiMessage,
         saveBackendProviderKey,
         reconcileSupabaseNow,
+        runMarketIntelligenceScan,
+        simulatePosition,
       }}
     >
       {children}
@@ -805,3 +1010,4 @@ export function useDemInvest(): DemInvestContextValue {
   }
   return ctx;
 }
+

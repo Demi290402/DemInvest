@@ -209,8 +209,56 @@ export interface SupportResistanceLevel {
   algorithm: 'PIVOT_FRACTAL_ATR_CLUSTER_V1';
 }
 
+export interface ConfirmedPivotPoint {
+  price: number;
+  type: 'PIVOT_HIGH' | 'PIVOT_LOW';
+  leftBars: number;
+  rightBars: number;
+  pivotCandleTime: string; // Timestamp della candela su cui si è formato il massimo/minimo
+  confirmedAtCandleTime: string; // Timestamp della candela N successiva che conferma il pivot senza look-ahead bias
+  strengthScore: number;
+  broken: boolean;
+  falseBreakoutDetected: boolean;
+}
+
 /**
- * 7. Indicatori Quantitativi Deterministici
+ * 6b. Audit di Qualità e Validazione Dati di Mercato (Fail-Safe Layer)
+ */
+export type MarketDataQualityClassification =
+  | 'VALID'
+  | 'DELAYED'
+  | 'STALE'
+  | 'INCOMPLETE'
+  | 'INVALID'
+  | 'UNAVAILABLE';
+
+export interface DataQualityAuditReport {
+  instrumentId: string;
+  timeframe: CandleTimeframe;
+  evaluatedAt: string;
+  classification: MarketDataQualityClassification;
+  pricePositiveCheck: boolean;
+  ohlcCoherenceCheck: boolean;
+  noDuplicateTimestampsCheck: boolean;
+  chronologicalOrderCheck: boolean;
+  noFutureTimestampsCheck: boolean;
+  totalCandlesReceived: number;
+  validClosedCandlesCount: number;
+  formingCandlesExcluded: number;
+  invalidCandlesDropped: number;
+  volumeReliable: boolean;
+  volumeUnavailableReason?: string;
+  anomalyFlags: string[];
+  isSpotVsDerivativeDistinguished: boolean;
+  instrumentContractNature: 'SPOT' | 'DERIVATIVE_CFD_FUTURE';
+  isMarketSessionOpen: boolean;
+  delaySeconds: number;
+  blockingSignalGeneration: boolean;
+  blockingReasons: string[];
+}
+
+/**
+ * 7. Indicatori Quantitativi Deterministici (Estesi Prompt 3)
  */
 export interface QuantitativeIndicatorsSnapshot {
   instrumentId: string;
@@ -223,13 +271,28 @@ export interface QuantitativeIndicatorsSnapshot {
   // Trend
   sma20: number | null;
   sma50: number | null;
+  sma100?: number | null;
   sma200: number | null;
+  ema9?: number | null;
   ema12: number | null;
   ema20: number | null;
   ema26: number | null;
+  ema50?: number | null;
+  ema200?: number | null;
   adx14: number | null;
+  plusDi14?: number | null;
+  minusDi14?: number | null;
   distanceFromSma20Pct: number | null;
   distanceFromSma50Pct: number | null;
+  distanceFromSma200Pct?: number | null;
+  sma20SlopeNormalizedPct?: number | null;
+  ema20SlopeNormalizedPct?: number | null;
+  ema50SlopeNormalizedPct?: number | null;
+  marketStructureSequence?:
+    | 'HIGHER_HIGHS_HIGHER_LOWS'
+    | 'LOWER_HIGHS_LOWER_LOWS'
+    | 'MIXED_RANGE'
+    | 'INSUFFICIENT_DATA';
   trendDirection: 'BULLISH' | 'BEARISH' | 'SIDEWAYS' | 'INSUFFICIENT_DATA';
   // Momentum
   rsi14: number | null;
@@ -239,6 +302,7 @@ export interface QuantitativeIndicatorsSnapshot {
     histogram: number;
   } | null;
   roc10: number | null;
+  momentum10?: number | null;
   stochastic14: {
     k: number;
     d: number;
@@ -246,6 +310,7 @@ export interface QuantitativeIndicatorsSnapshot {
   // Volatilità
   atr14: number | null;
   atrPct: number | null;
+  trueRangeLatest?: number | null;
   bollingerBands20: {
     upper: number;
     middle: number;
@@ -255,16 +320,25 @@ export interface QuantitativeIndicatorsSnapshot {
   } | null;
   historicalVolatilityAnnualizedPct: number | null;
   maxDrawdownPct: number | null;
+  currentDrawdownFromPeakPct?: number | null;
   // Volume
   volumeSma20: number | null;
   relativeVolume: number | null;
   obv: number | null;
+  volumeAvailableAndReliable?: boolean;
+  priceVolumeConfirmation?:
+    | 'CONFIRMED_BULLISH'
+    | 'CONFIRMED_BEARISH'
+    | 'DIVERGENT_WEAK'
+    | 'UNAVAILABLE_PROVIDER_VOLUME';
   volumeAnomaly: 'NONE' | 'HIGH_VOLUME_SPIKE' | 'LOW_VOLUME_DRYUP';
   // Prezzi & Struttura
   periodHigh: number | null;
   periodLow: number | null;
   supports: SupportResistanceLevel[];
   resistances: SupportResistanceLevel[];
+  confirmedPivotHighs?: ConfirmedPivotPoint[];
+  confirmedPivotLows?: ConfirmedPivotPoint[];
   priceStructure: 'BREAKOUT' | 'BREAKDOWN' | 'PULLBACK_IN_UPTREND' | 'CONSOLIDATION_RANGE' | 'NORMAL';
   supportResistanceAlgorithmDoc: string;
 }
@@ -637,7 +711,13 @@ export interface AIToolCallLog {
     | 'get_signal_history'
     | 'compare_assets'
     | 'calculate_scenario'
-    | 'get_verified_market_news';
+    | 'get_verified_market_news'
+    | 'detect_market_regime'
+    | 'scan_market_opportunities'
+    | 'evaluate_strategy_setup'
+    | 'assess_signal_risk'
+    | 'simulate_position_risk'
+    | 'get_recent_backtest_summary';
   inputParams: Record<string, unknown>;
   outputSummary: Record<string, unknown>;
   executionMs: number;
@@ -730,4 +810,315 @@ export interface SupabaseSyncDiagnostics {
     timestamp: string;
   }[];
 }
+
+/**
+ * 17. Market Regime Detector (Separazione Regime Direzionale vs Regime di Volatilità)
+ */
+export type DirectionalMarketRegime =
+  | 'BULLISH_TREND'
+  | 'BEARISH_TREND'
+  | 'SIDEWAYS'
+  | 'UNCERTAIN';
+
+export type VolatilityMarketRegime =
+  | 'HIGH_VOLATILITY'
+  | 'LOW_VOLATILITY'
+  | 'NORMAL_VOLATILITY';
+
+export interface MarketRegimeAnalysis {
+  instrumentId: string;
+  timeframe: CandleTimeframe;
+  evaluatedAt: string;
+  directionalRegime: DirectionalMarketRegime;
+  volatilityRegime: VolatilityMarketRegime;
+  regimeConfidenceScore: number; // 0..100 euristico
+  adxStrengthLabel: 'STRONG_TREND' | 'MODERATE_TREND' | 'WEAK_OR_ABSENT';
+  maAlignment: 'BULLISH_STACK' | 'BEARISH_STACK' | 'MIXED';
+  atrExpansionRatio: number | null;
+  bollingerState: 'SQUEEZE' | 'EXPANSION' | 'NORMAL';
+  compatibleStrategies: string[];
+  incompatibleStrategies: string[];
+  explanation: string;
+}
+
+/**
+ * 18. Multi-Timeframe Intelligence & Consenso Orizzonti
+ */
+export type MultiTimeframeConsensusState =
+  | 'CONCORDANT_BULLISH'
+  | 'CONCORDANT_BEARISH'
+  | 'CONFLICTING_TRENDS'
+  | 'CONFIRMED_BY_HIGHER_TF'
+  | 'UNCONFIRMED_BY_HIGHER_TF'
+  | 'UNCERTAIN_SCENARIO';
+
+export interface MultiTimeframeConsensus {
+  instrumentId: string;
+  horizon: TimeHorizon;
+  operationalTimeframe: CandleTimeframe;
+  higherConfirmationTimeframe: CandleTimeframe;
+  operationalTrend: 'BULLISH' | 'BEARISH' | 'SIDEWAYS' | 'INSUFFICIENT_DATA';
+  higherTrend: 'BULLISH' | 'BEARISH' | 'SIDEWAYS' | 'INSUFFICIENT_DATA';
+  operationalRegime: DirectionalMarketRegime;
+  higherRegime: DirectionalMarketRegime;
+  consensusState: MultiTimeframeConsensusState;
+  convictionAdjustment: number; // da -25 a +20 punti euristici
+  isHigherTimeframeAligned: boolean;
+  summary: string;
+}
+
+/**
+ * 19. Quantitative Strategy Engine (4 Strategie Deterministiche V1)
+ */
+export type StrategyIdV3 =
+  | 'STRAT_TREND_FOLLOWING_V1'
+  | 'STRAT_CONFIRMED_BREAKOUT_V1'
+  | 'STRAT_PULLBACK_IN_TREND_V1'
+  | 'STRAT_VOLATILITY_RISK_ALERT_V1';
+
+export type SignalClassificationV3 =
+  | 'BUY_SETUP'
+  | 'SELL_SETUP'
+  | 'EXIT_WARNING'
+  | 'BULLISH_BREAKOUT'
+  | 'BEARISH_BREAKDOWN'
+  | 'MOMENTUM_CHANGE'
+  | 'TREND_REVERSAL'
+  | 'VOLATILITY_ALERT'
+  | 'RISK_WARNING'
+  | 'NO_TRADE';
+
+export type SellSignalDistinction =
+  | 'EXISTING_POSITION_EXIT'
+  | 'BEARISH_MARKET_SIGNAL'
+  | 'THEORETICAL_SHORT_SETUP'
+  | 'NOT_APPLICABLE';
+
+export interface QuantitativeStrategyDefinition {
+  id: StrategyIdV3;
+  name: string;
+  version: string;
+  supportedHorizons: TimeHorizon[];
+  requiredTimeframes: CandleTimeframe[];
+  minClosedCandles: number;
+  requiredIndicators: string[];
+  compatibleDirectionalRegimes: DirectionalMarketRegime[];
+  compatibleVolatilityRegimes: VolatilityMarketRegime[];
+  entryConditionsSummary: string[];
+  exitOrAttentionConditionsSummary: string[];
+  invalidationRulesSummary: string[];
+  knownRisksAndFalsePositives: string[];
+}
+
+export interface StrategyEvaluationResult {
+  strategyId: StrategyIdV3;
+  strategyName: string;
+  strategyVersion: string;
+  instrumentId: string;
+  instrumentTicker: string;
+  horizon: TimeHorizon;
+  timeframe: CandleTimeframe;
+  evaluatedAt: string;
+  isTriggered: boolean;
+  signalClassification: SignalClassificationV3;
+  legacySignalType: SignalType;
+  signalStatus: SignalStatus;
+  sellDistinction: SellSignalDistinction;
+  referenceEntryZone: { min: number; max: number; ideal: number } | null;
+  invalidationPrice: number | null;
+  invalidationReason: string;
+  targetLevels: { price: number; label: string; atrMultiple: number }[];
+  conditionsMet: string[];
+  conditionsUnmet: string[];
+  heuristicScore: number;
+  rationale: string;
+  keyRisks: string[];
+}
+
+/**
+ * 20. Risk Intelligence Engine & Simulatore Posizione
+ */
+export type RiskBandLevel = 'LOW' | 'MODERATE' | 'HIGH' | 'EXTREME';
+
+export interface RiskIntelligenceReport {
+  instrumentId: string;
+  instrumentTicker: string;
+  evaluatedAt: string;
+  overallRiskScore: number; // 0..100 (più alto = più rischioso)
+  riskBand: RiskBandLevel;
+  atrPct: number | null;
+  annualizedVolatilityPct: number | null;
+  recentMaxDrawdownPct: number | null;
+  distanceToInvalidationPct: number | null;
+  liquidityRisk: 'LOW' | 'MEDIUM' | 'HIGH';
+  fxRiskExposed: boolean;
+  fxPairDescription: string;
+  portfolioConcentrationImpactPct: number;
+  overnightAndGapRisk: 'NONE_24X7' | 'MODERATE_INTRADAY' | 'HIGH_OVERNIGHT_WEEKEND_GAP';
+  deterministicScenarios: {
+    label: string;
+    targetPrice: number;
+    movePct: number;
+    estimatedPnlPct: number;
+  }[];
+  riskWarnings: string[];
+}
+
+export interface PositionSimulationInput {
+  instrumentId: string;
+  capitalAllocatedInBase: number;
+  entryPrice: number;
+  invalidationStopPrice: number;
+  targetPrices: number[];
+  totalPortfolioEquityInBase: number;
+  maxAcceptablePortfolioRiskPct: number;
+  commissionPct: number;
+  spreadBps: number;
+  slippageBps: number;
+  fxRateToBase?: number;
+}
+
+export interface PositionSimulationResult {
+  instrumentId: string;
+  entryPrice: number;
+  invalidationStopPrice: number;
+  positionUnits: number;
+  grossExposureInBase: number;
+  totalRoundtripCostsInBase: number;
+  maxLossAtInvalidationInBase: number;
+  maxLossPctOfPosition: number;
+  portfolioCapitalAtRiskPct: number;
+  maxAcceptablePortfolioRiskPct: number;
+  exceedsMaxRiskThreshold: boolean;
+  recommendedMaxPositionUnits: number;
+  recommendedMaxCapitalInBase: number;
+  targetsSimulation: {
+    targetPrice: number;
+    grossProfitInBase: number;
+    netProfitInBase: number;
+    netReturnPct: number;
+    riskRewardRatio: number;
+  }[];
+  warnings: string[];
+}
+
+/**
+ * 21. Opportunity Ranking Engine (Composito Ponderato con Penalità Collinearità)
+ */
+export interface OpportunityRankingItem {
+  rank: number;
+  instrumentId: string;
+  instrumentTicker: string;
+  instrumentName: string;
+  assetClass: AssetClass;
+  verifiedBrokerSymbol?: string;
+  horizon: TimeHorizon;
+  timeframe: CandleTimeframe;
+  signalClassification: SignalClassificationV3;
+  signalStatus: SignalStatus;
+  sellDistinction: SellSignalDistinction;
+  strategyId: StrategyIdV3;
+  strategyName: string;
+  compositeScore: number; // 0..100 qualità setup
+  dataCompletenessScore: number; // 0..100 separato dalla qualità dell'opportunità
+  weights: {
+    trendCoherence: number;
+    momentumConfirm: number;
+    structureProximity: number;
+    riskRewardQuality: number;
+    multiTimeframeConfirm: number;
+  };
+  componentScores: {
+    trendCoherence: number;
+    momentumConfirm: number;
+    structureProximity: number;
+    riskRewardQuality: number;
+    multiTimeframeConfirm: number;
+  };
+  collinearityPenaltyApplied: boolean;
+  collinearityNotes: string;
+  positiveDrivers: string[];
+  negativeRiskFactors: string[];
+  observedPrice: number;
+  currency: string;
+  referenceEntryZone: { min: number; max: number; ideal: number } | null;
+  invalidationPrice: number | null;
+  targetLevels: { price: number; label: string; atrMultiple: number }[];
+  riskBand: RiskBandLevel;
+  directionalRegime: DirectionalMarketRegime;
+  volatilityRegime: VolatilityMarketRegime;
+  multiTimeframeState: MultiTimeframeConsensusState;
+}
+
+/**
+ * 22. Smart Market Scanner (Universo Configurabile & Risultati Strutturati)
+ */
+export interface MarketScanFilterParams {
+  assetClasses?: AssetClass[];
+  brokers?: string[];
+  currencies?: string[];
+  venues?: string[];
+  horizon?: TimeHorizon;
+  timeframe?: CandleTimeframe;
+  regimeFilter?: DirectionalMarketRegime | 'ALL';
+  volatilityFilter?: VolatilityMarketRegime | 'ALL';
+  trendFilter?: 'BULLISH' | 'BEARISH' | 'SIDEWAYS' | 'ALL';
+  rsiMin?: number;
+  rsiMax?: number;
+  minRelativeVolume?: number;
+  nearSupportOrResistanceOnly?: boolean;
+  breakoutOnly?: boolean;
+  pullbackOnly?: boolean;
+  minHeuristicScore?: number;
+  maxRiskBand?: RiskBandLevel | 'ALL';
+  excludeStaleData?: boolean;
+  onlyWatchlistOrPortfolio?: boolean;
+}
+
+export interface AnalyzedInstrumentIntelligenceItem {
+  instrumentId: string;
+  ticker: string;
+  name: string;
+  assetClass: AssetClass;
+  venueMic: string;
+  currency: string;
+  priorityTier: 'WATCHLIST' | 'ACTIVE_ALERTS' | 'PORTFOLIO' | 'USER_SELECTED' | 'CATALOG';
+  quote: MarketQuote;
+  dataQuality: DataQualityAuditReport;
+  indicators: QuantitativeIndicatorsSnapshot;
+  regime: MarketRegimeAnalysis;
+  multiTimeframe: MultiTimeframeConsensus;
+  strategiesEvaluated: StrategyEvaluationResult[];
+  bestStrategySetup: StrategyEvaluationResult;
+  riskReport: RiskIntelligenceReport;
+}
+
+export interface MarketScanRunResult {
+  runId: string;
+  startedAt: string;
+  completedAt: string;
+  executionMs: number;
+  mode: DataExecutionMode;
+  appliedFilters: MarketScanFilterParams;
+  universeTotal: number;
+  analyzedCount: number;
+  excludedCount: number;
+  coveragePct: number;
+  excludedInstruments: {
+    instrumentId: string;
+    ticker: string;
+    name: string;
+    reasonCode:
+      | 'INVALID_OR_STALE_DATA'
+      | 'INSUFFICIENT_HISTORICAL_CANDLES'
+      | 'FILTERED_OUT_BY_CRITERIA'
+      | 'PROVIDER_UNAVAILABLE';
+    detail: string;
+  }[];
+  analyzedInstruments: AnalyzedInstrumentIntelligenceItem[];
+  detectedSetups: StrategyEvaluationResult[];
+  riskAlerts: StrategyEvaluationResult[];
+  topRankedOpportunities: OpportunityRankingItem[];
+}
+
 

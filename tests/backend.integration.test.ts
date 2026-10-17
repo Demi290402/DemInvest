@@ -5,15 +5,19 @@
 import { describe, expect, it } from 'vitest';
 import '../server/nodePlatformBridge';
 import {
+  analyzeBackendInstrumentIntelligence,
   dispatchNotificationAndWebPush,
+  executeBackendSmartMarketScan,
   getDbState,
   getMarketQuoteForInstrument,
   getOrInitVapidKeys,
   getProvidersHealthDashboard,
+  getQuantitativeStrategiesCatalogV3,
   getSupabaseDiagnosticsSnapshot,
   processContextualAiChat,
   pushStateToSupabaseIfConfigured,
   registerCoinGeckoInstrumentInCatalog,
+  runBackendPositionSimulation,
   runBackendSchedulerCycle,
   sanitizeUserPromptAndGuardOrders,
 } from '../server/backendEngine';
@@ -53,7 +57,7 @@ describe('DemInvest — Integrazione Backend, Provider, Sicurezza e AI Guardrail
     expect(blockedReply.toolCalls.length).toBe(0);
   });
 
-  it('4. Esegue i tool autorizzati del backend in DemInvest AI e popola i log di esecuzione', async () => {
+  it('4. Esegue i tool autorizzati del backend in DemInvest AI (inclusi detect_market_regime e evaluate_strategy_setup) e popola i log', async () => {
     const reply = await processContextualAiChat({
       userPrompt: 'Analizza BTC/USD e mostra i rischi',
       contextInstrumentId: 'INST_BTC_USD_SPOT',
@@ -62,7 +66,10 @@ describe('DemInvest — Integrazione Backend, Provider, Sicurezza e AI Guardrail
       dataExecutionMode: 'DEMO',
     });
 
-    expect(reply.toolCalls.length).toBeGreaterThanOrEqual(4);
+    expect(reply.toolCalls.length).toBeGreaterThanOrEqual(6);
+    const toolNames = reply.toolCalls.map((t) => t.toolName);
+    expect(toolNames).toContain('detect_market_regime');
+    expect(toolNames).toContain('evaluate_strategy_setup');
     expect(reply.structuredSections?.verifiedData.length).toBeGreaterThan(0);
     expect(reply.structuredSections?.quantitativeCalculations.length).toBeGreaterThan(0);
   });
@@ -102,5 +109,45 @@ describe('DemInvest — Integrazione Backend, Provider, Sicurezza e AI Guardrail
     expect(Array.isArray(diagAfter.syncStepsLog)).toBe(true);
     expect(diagAfter.syncStepsLog.length).toBeGreaterThan(0);
   });
+
+  it('7. Esegue gli orchestratori Market Intelligence V3 (Strategie, Analisi Singola, Smart Scanner e Simulatore Posizione)', async () => {
+    const catalog = getQuantitativeStrategiesCatalogV3();
+    expect(catalog.strategies.length).toBe(4);
+    expect(catalog.horizonProfiles.BREVE.primaryTimeframe).toBe('4h');
+
+    const singleAnalysis = await analyzeBackendInstrumentIntelligence({
+      instrumentId: 'INST_BTC_USD_SPOT',
+      horizon: 'BREVE',
+      timeframe: '1d',
+      mode: 'DEMO',
+    });
+    expect(singleAnalysis).not.toBeNull();
+    expect(singleAnalysis!.dataQuality.classification).toBe('VALID');
+    expect(singleAnalysis!.strategiesEvaluated.length).toBe(4);
+    expect(singleAnalysis!.regime.directionalRegime).toBeDefined();
+
+    const scanRun = await executeBackendSmartMarketScan({
+      filters: { horizon: 'BREVE', assetClasses: ['CRYPTO'] },
+      mode: 'DEMO',
+    });
+    expect(scanRun.analyzedCount).toBeGreaterThan(0);
+    expect(scanRun.topRankedOpportunities.length).toBeGreaterThan(0);
+
+    const simRes = runBackendPositionSimulation({
+      instrumentId: 'INST_BTC_USD_SPOT',
+      capitalAllocatedInBase: 2000,
+      entryPrice: 80000,
+      invalidationStopPrice: 76000,
+      targetPrices: [88000],
+      totalPortfolioEquityInBase: 20000,
+      maxAcceptablePortfolioRiskPct: 1.5,
+      commissionPct: 0.05,
+      spreadBps: 10,
+      slippageBps: 5,
+    });
+    expect(simRes.positionUnits).toBeGreaterThan(0);
+    expect(simRes.targetsSimulation[0].riskRewardRatio).toBeGreaterThan(1);
+  });
 });
+
 

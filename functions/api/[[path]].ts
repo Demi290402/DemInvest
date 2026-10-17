@@ -7,19 +7,24 @@
 // ==============================================================================
 
 import {
+  analyzeBackendInstrumentIntelligence,
+  applyIncomingSupabaseHeaders,
   configureCloudEnvironment,
   dispatchNotificationAndWebPush,
+  executeBackendSmartMarketScan,
   fetchLiveFxRatesToBase,
   getDbState,
   getHistoricalCandlesForInstrument,
   getMarketQuoteForInstrument,
   getOrInitVapidKeys,
   getProvidersHealthDashboard,
+  getQuantitativeStrategiesCatalogV3,
   getSupabaseDiagnosticsSnapshot,
   processContextualAiChat,
   pullStateFromSupabaseIfConfigured,
   pushStateToSupabaseIfConfigured,
   registerCoinGeckoInstrumentInCatalog,
+  runBackendPositionSimulation,
   runBackendSchedulerCycle,
   saveDbState,
   saveRuntimeSecret,
@@ -42,7 +47,9 @@ import {
   CandleTimeframe,
   DataExecutionMode,
   MarketQuote,
+  MarketScanFilterParams,
   PortfolioTransaction,
+  PositionSimulationInput,
   TimeHorizon,
 } from '../../src/types/domain';
 
@@ -90,6 +97,7 @@ export const onRequest = async (context: {
 }): Promise<Response> => {
   const { request, env } = context;
   configureCloudEnvironment(env);
+  applyIncomingSupabaseHeaders(request.headers);
   await pullStateFromSupabaseIfConfigured();
 
   const urlObj = new URL(request.url);
@@ -177,7 +185,7 @@ export const onRequest = async (context: {
         },
       };
       db.activeSessionToken = token;
-      saveDbState(db);
+      saveDbState(db, true);
       const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(db, {
         plainPassword: password,
       });
@@ -257,7 +265,7 @@ export const onRequest = async (context: {
 
       const token = generateRandomTokenHex();
       db.activeSessionToken = token;
-      saveDbState(db);
+      saveDbState(db, true);
       const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(db, {
         plainPassword: password,
       });
@@ -847,7 +855,10 @@ export const onRequest = async (context: {
             createdAt: new Date().toISOString(),
           },
         };
-        saveDbState(currentDb);
+        if (!currentDb.activeSessionToken) {
+          currentDb.activeSessionToken = generateRandomTokenHex();
+        }
+        saveDbState(currentDb, true);
       }
 
       const supabaseDiagnostics = await pushStateToSupabaseIfConfigured(currentDb, {
@@ -858,6 +869,46 @@ export const onRequest = async (context: {
         supabaseDiagnostics,
         user: currentDb.ownerAccount?.user || null,
       });
+    }
+
+    // 13. ADVANCED MARKET INTELLIGENCE V3 ENDPOINTS
+    if (pathname === '/api/intelligence/strategies' && method === 'GET') {
+      return jsonResponse(200, getQuantitativeStrategiesCatalogV3());
+    }
+
+    if (pathname === '/api/intelligence/analyze-instrument' && method === 'GET') {
+      const instrumentId = urlObj.searchParams.get('instrumentId') || 'INST_BTC_USD_SPOT';
+      const horizon = (urlObj.searchParams.get('horizon') || 'BREVE') as TimeHorizon;
+      const timeframe = (urlObj.searchParams.get('timeframe') || undefined) as
+        | CandleTimeframe
+        | undefined;
+      const mode = (urlObj.searchParams.get('mode') === 'DEMO' ? 'DEMO' : 'LIVE') as DataExecutionMode;
+      const item = await analyzeBackendInstrumentIntelligence({
+        instrumentId,
+        horizon,
+        timeframe,
+        mode,
+      });
+      if (!item) {
+        return jsonResponse(404, { error: 'Strumento non trovato nel registro.' });
+      }
+      return jsonResponse(200, { intelligence: item, analysis: item });
+    }
+
+    if (pathname === '/api/intelligence/scan' && method === 'POST') {
+      const body = await parseRequestBody(request);
+      const filters = (body.filters || {}) as MarketScanFilterParams;
+      const mode = (body.mode === 'DEMO' ? 'DEMO' : 'LIVE') as DataExecutionMode;
+      const scanResult = await executeBackendSmartMarketScan({ filters, mode });
+      return jsonResponse(200, { scanResult });
+    }
+
+    if (pathname === '/api/intelligence/simulate-position' && method === 'POST') {
+      const body = await parseRequestBody(request);
+      const simulation = runBackendPositionSimulation(
+        body as unknown as PositionSimulationInput
+      );
+      return jsonResponse(200, { simulation });
     }
 
     return jsonResponse(404, { error: `Endpoint API ${pathname} non trovato.` });
