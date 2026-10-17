@@ -5,15 +5,46 @@
 @layer base {
   html {
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
   }
 
   body {
-    @apply font-sans antialiased;
+    @apply font-sans antialiased text-slate-900 bg-slate-50 dark:text-slate-100 dark:bg-navy-950 transition-colors duration-150;
   }
 
+  /* Cifre numeriche e percentuali a larghezza fissa per perfetto allineamento tabellare */
   .num-mono {
-    font-variant-numeric: tabular-nums;
-    @apply font-mono;
+    font-variant-numeric: tabular-nums lining-nums;
+    @apply font-mono tracking-tight;
+  }
+}
+
+@layer components {
+  /* Anello di focus accessibile (WCAG 2.1 AA) per navigazione da tastiera */
+  .focus-ring {
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-navy-950;
+  }
+
+  /* Target tattile minimo conforme ad accessibilità mobile (min 44px) */
+  .touch-target {
+    @apply min-h-[44px] min-w-[44px];
+  }
+
+  /* Card Elevata con bordo sottile calibrato */
+  .fintech-card {
+    @apply rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm transition duration-150 
+           dark:border-navy-800/80 dark:bg-navy-900/90 dark:shadow-none;
+  }
+
+  .fintech-card-subtle {
+    @apply rounded-xl border border-slate-200/70 bg-slate-50/70 p-4 transition duration-150 
+           dark:border-navy-800/60 dark:bg-navy-850/60;
+  }
+
+  /* Badge con icona e testo esplicito per non dipendere solo dal colore */
+  .fintech-badge {
+    @apply inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold tracking-wide;
   }
 }
 
@@ -35,3 +66,4 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(16, 185, 129, 0.5);
 }
+

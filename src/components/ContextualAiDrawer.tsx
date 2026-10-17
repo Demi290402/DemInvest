@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Bot,
   CheckCircle2,
@@ -30,6 +30,18 @@ export const ContextualAiDrawer: React.FC = () => {
   const [sending, setSending] = useState(false);
   const [showToolLogs, setShowToolLogs] = useState(false);
 
+  // Chiusura con tasto Escape
+  useEffect(() => {
+    if (!isAiDrawerOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsAiDrawerOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isAiDrawerOpen, setIsAiDrawerOpen]);
+
   if (!isAiDrawerOpen) return null;
 
   const currentInst =
@@ -56,10 +68,19 @@ export const ContextualAiDrawer: React.FC = () => {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs">
-      <div className="flex h-full w-full max-w-2xl flex-col border-l border-slate-800 bg-white text-slate-900 shadow-2xl dark:bg-anthracite-900 dark:text-slate-100">
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm transition-opacity duration-150"
+      onClick={() => setIsAiDrawerOpen(false)}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ai-drawer-title"
+    >
+      <div
+        className="flex h-full w-full max-w-2xl flex-col border-l border-slate-200 bg-white text-slate-900 shadow-2xl transition-transform duration-200 dark:border-navy-800 dark:bg-navy-950 dark:text-slate-100"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header contestuale */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-navy-800">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-500/15 text-brand-400">
               <Bot className="h-5 w-5" />
