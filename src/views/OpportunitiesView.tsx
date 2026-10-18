@@ -18,6 +18,13 @@ import {
   TimeHorizon,
   VolatilityMarketRegime,
 } from '../types/domain';
+import {
+  translateMarketRegime,
+  translateVolatilityRegime,
+  translateSignalClassification,
+  translateSignalStatus,
+  translateStrategyName,
+} from '../lib/financialSemantics';
 
 interface OpportunitiesViewProps {
   onOpenInstrument: (instrumentId: string) => void;
@@ -27,6 +34,7 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
   onOpenInstrument,
 }) => {
   const {
+    uiMode,
     instruments,
     quotes,
     brokerMappings,
@@ -382,44 +390,44 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
               <div
                 key={item.instrumentId}
                 data-testid={`opportunity-ranking-card-${item.instrumentId}`}
-                className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-anthracite-900"
+                className="rounded-xl border border-slate-200 bg-slate-50 p-4 transition dark:border-slate-800 dark:bg-anthracite-900"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded bg-brand-500/20 px-2 py-0.5 font-mono text-xs font-bold text-brand-400">
+                    <span className="rounded bg-brand-500/20 px-2 py-0.5 font-mono text-xs font-bold text-brand-600 dark:text-brand-400">
                       #{item.rank}
                     </span>
                     <span className="text-sm font-bold text-slate-900 dark:text-white">
                       {item.instrumentName} ({item.instrumentTicker})
                     </span>
-                    <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-bold text-emerald-400">
-                      {item.signalClassification}
+                    <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                      {uiMode === 'SIMPLE'
+                        ? translateSignalClassification(item.signalClassification).shortLabel
+                        : item.signalClassification}
                     </span>
-                    <span className="rounded bg-slate-200 px-2 py-0.5 font-mono text-[10px] font-semibold dark:bg-slate-800">
-                      {item.strategyName} ({item.strategyId})
+                    <span className="rounded bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                      {translateStrategyName(item.strategyId).name}
                     </span>
-                    <span className="rounded bg-slate-200 px-2 py-0.5 font-mono text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                      Regime: {item.directionalRegime} • {item.volatilityRegime}
-                    </span>
-                    <span className="rounded bg-brand-500/10 px-2 py-0.5 font-mono text-[10px] text-brand-300">
-                      MTF: {item.multiTimeframeState}
+                    <span className="rounded bg-slate-200 px-2 py-0.5 text-[10px] text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                      {uiMode === 'SIMPLE'
+                        ? `${translateMarketRegime(item.directionalRegime).shortLabel} • ${translateVolatilityRegime(item.volatilityRegime).label}`
+                        : `${item.directionalRegime} • ${item.volatilityRegime}`}
                     </span>
                   </div>
 
                   <div className="flex items-center gap-3">
                     <div className="text-right">
-                      <div className="num-mono text-sm font-bold text-brand-400">
-                        Composite Score: {item.compositeScore}/100
+                      <div className="num-mono text-sm font-bold text-brand-600 dark:text-brand-400">
+                        Score: {item.compositeScore}/100
                       </div>
-                      <div className="font-mono text-[10px] text-slate-400">
-                        Completezza Dati: {item.dataCompletenessScore}/100 • Rischio:{' '}
-                        {item.riskBand}
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                        Dati: {item.dataCompletenessScore}% • Rischio: {item.riskBand}
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => onOpenInstrument(item.instrumentId)}
-                      className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-anthracite-950 hover:bg-brand-400"
+                      className="rounded-lg bg-brand-500 px-3.5 py-1.5 text-xs font-semibold text-anthracite-950 transition hover:bg-brand-400"
                     >
                       Analizza
                     </button>
@@ -427,29 +435,27 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
                 </div>
 
                 {item.sellDistinction !== 'NOT_APPLICABLE' && (
-                  <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-300">
-                    Distinzione Segnale Ribassista:{' '}
-                    {item.sellDistinction === 'EXISTING_POSITION_EXIT'
-                      ? 'Uscita da Posizione Esistente in Portafoglio (EXISTING_POSITION_EXIT)'
-                      : 'Segnale Tecnico Ribassista di Mercato — Non Short Automatico (BEARISH_MARKET_SIGNAL)'}
+                  <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                    Distinzione: {item.sellDistinction === 'EXISTING_POSITION_EXIT'
+                      ? 'Uscita da Posizione in Portafoglio'
+                      : 'Segnale Tecnico Ribassista di Mercato (Non Short)'}
                   </div>
                 )}
 
-                <div className="mt-2.5 grid grid-cols-1 gap-2 border-t border-slate-200/70 pt-2.5 text-[11px] dark:border-slate-800 sm:grid-cols-3">
-                  <div className="num-mono text-slate-300">
-                    <strong className="text-slate-400">Livelli Operativi:</strong> Prezzo{' '}
-                    {item.observedPrice} {item.currency} | Invalidazione:{' '}
+                <div className="mt-2.5 grid grid-cols-1 gap-2 border-t border-slate-200/80 pt-2.5 text-[11px] dark:border-slate-800 sm:grid-cols-3">
+                  <div className="num-mono text-slate-700 dark:text-slate-300">
+                    <strong className="text-slate-500 dark:text-slate-400">Livelli Operativi:</strong> Prezzo{' '}
+                    {item.observedPrice} {item.currency} | Inv:{' '}
                     {item.invalidationPrice ?? 'N/D'} | Target:{' '}
                     {item.targetLevels.map((t) => t.price).join(' → ') || 'N/D'}
                   </div>
-                  <div className="text-slate-400">
-                    <strong className="text-emerald-400">Driver Positivi:</strong>{' '}
+                  <div className="text-slate-600 dark:text-slate-400">
+                    <strong className="text-emerald-600 dark:text-emerald-400">Fattori a Favore:</strong>{' '}
                     {item.positiveDrivers.slice(0, 2).join(' • ')}
                   </div>
-                  <div className="text-slate-400">
-                    <strong className="text-red-400">Rischi & Collinearità:</strong>{' '}
-                    {item.negativeRiskFactors[0] || 'Rischio ordinario'} (
-                    {item.collinearityNotes})
+                  <div className="text-slate-600 dark:text-slate-400">
+                    <strong className="text-rose-600 dark:text-rose-400">Elementi di Rischio:</strong>{' '}
+                    {item.negativeRiskFactors[0] || 'Rischio di mercato standard'}
                   </div>
                 </div>
               </div>
@@ -458,21 +464,20 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
 
           {latestMarketScan.excludedInstruments.length > 0 && (
             <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3.5 text-xs">
-              <div className="font-bold text-amber-400">
-                Strumenti Esclusi dallo Scanner per Controllo Qualità Dati (Fail-Safe Layer —{' '}
-                {latestMarketScan.excludedInstruments.length}):
+              <div className="font-bold text-amber-700 dark:text-amber-400">
+                Strumenti con dati non sufficienti per lo screening ({latestMarketScan.excludedInstruments.length}):
               </div>
               <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                 {latestMarketScan.excludedInstruments.map((ex) => (
                   <div
                     key={ex.instrumentId}
-                    className="flex items-center justify-between rounded bg-anthracite-900 px-2.5 py-1.5 text-[11px]"
+                    className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-white px-2.5 py-1.5 text-[11px] shadow-sm dark:bg-anthracite-900"
                   >
-                    <span className="font-bold text-white">
+                    <span className="font-bold text-slate-900 dark:text-white">
                       {ex.ticker} — {ex.name}
                     </span>
-                    <span className="text-amber-300">
-                      [{ex.reasonCode}] {ex.detail}
+                    <span className="text-amber-700 dark:text-amber-300">
+                      {ex.detail}
                     </span>
                   </div>
                 ))}
@@ -607,54 +612,54 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
             className="mt-4 grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-800 dark:bg-anthracite-900 sm:grid-cols-4"
           >
             <div>
-              <div className="text-[10px] uppercase text-slate-400">Unità & Costi Roundtrip</div>
-              <div className="num-mono mt-1 font-bold text-white">
+              <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Unità & Costi Roundtrip</div>
+              <div className="num-mono mt-1 font-bold text-slate-900 dark:text-white">
                 {simResult.positionUnits} unità ({simResult.grossExposureInBase} EUR)
               </div>
-              <div className="mt-0.5 text-[11px] text-slate-400">
+              <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                 Costi (Spread+Slip+Comm): {simResult.totalRoundtripCostsInBase} EUR
               </div>
             </div>
 
             <div>
-              <div className="text-[10px] uppercase text-slate-400">
+              <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
                 Perdita Max a Invalidazione
               </div>
-              <div className="num-mono mt-1 font-bold text-red-400">
+              <div className="num-mono mt-1 font-bold text-rose-600 dark:text-red-400">
                 -{simResult.maxLossAtInvalidationInBase} EUR (
                 {simResult.portfolioCapitalAtRiskPct}% del Portafoglio)
               </div>
-              <div className="mt-0.5 text-[11px] text-slate-400">
+              <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                 Impatto su posizione: {simResult.maxLossPctOfPosition}%
               </div>
             </div>
 
             <div>
-              <div className="text-[10px] uppercase text-slate-400">
+              <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
                 Profitto Netto & R/R Target
               </div>
-              <div className="num-mono mt-1 font-bold text-emerald-400">
+              <div className="num-mono mt-1 font-bold text-emerald-600 dark:text-emerald-400">
                 +{simResult.targetsSimulation[0]?.netProfitInBase ?? 0} EUR | R/R Netto:{' '}
                 {simResult.targetsSimulation[0]?.riskRewardRatio ?? 'N/D'}:1
               </div>
-              <div className="mt-0.5 text-[11px] text-slate-400">
+              <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                 Rendimento Netto Target: {simResult.targetsSimulation[0]?.netReturnPct ?? 0}%
               </div>
             </div>
 
             <div>
-              <div className="text-[10px] uppercase text-slate-400">
-                Sizing Consigliato per Budget Rischio ({simMaxRiskPct}%)
+              <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                Sizing Consigliato ({simMaxRiskPct}%)
               </div>
-              <div className="num-mono mt-1 font-bold text-brand-400">
+              <div className="num-mono mt-1 font-bold text-brand-600 dark:text-brand-400">
                 Max Capitale: {simResult.recommendedMaxCapitalInBase} EUR (
                 {simResult.recommendedMaxPositionUnits} unità)
               </div>
               <div className="mt-0.5 text-[11px]">
                 {!simResult.exceedsMaxRiskThreshold ? (
-                  <span className="text-emerald-400">Entro il budget di rischio</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">Entro il budget di rischio</span>
                 ) : (
-                  <span className="text-amber-400">
+                  <span className="text-amber-600 dark:text-amber-400 font-medium">
                     Eccede il rischio max ({simResult.warnings[0]})
                   </span>
                 )}
@@ -687,7 +692,7 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
             {filteredSignals.map((sig) => (
               <div
                 key={sig.id}
-                className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-anthracite-900"
+                className="rounded-xl border border-slate-200 bg-slate-50 p-4 transition dark:border-slate-800 dark:bg-anthracite-900"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
@@ -697,31 +702,33 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
                     <span
                       className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
                         sig.signalType === 'BUY_SETUP' || sig.signalType === 'BREAKOUT_ALERT'
-                          ? 'bg-emerald-500/15 text-emerald-400'
+                          ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                           : sig.signalType === 'NO_TRADE'
-                            ? 'bg-slate-500/20 text-slate-300'
-                            : 'bg-amber-500/15 text-amber-400'
+                            ? 'bg-slate-500/15 text-slate-600 dark:text-slate-300'
+                            : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
                       }`}
                     >
-                      {sig.signalType}
+                      {uiMode === 'SIMPLE'
+                        ? translateSignalClassification(sig.signalType).shortLabel
+                        : sig.signalType}
                     </span>
-                    <span className="rounded bg-slate-200 px-2 py-0.5 font-mono text-[11px] font-semibold dark:bg-slate-800">
-                      Stato: {sig.status}
+                    <span className="rounded bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                      Stato: {translateSignalStatus(sig.status).label}
                     </span>
-                    <span className="rounded bg-brand-500/10 px-2 py-0.5 text-[11px] font-semibold text-brand-400">
+                    <span className="rounded bg-brand-500/10 px-2 py-0.5 text-[11px] font-semibold text-brand-700 dark:text-brand-400">
                       Orizzonte: {sig.horizon} ({sig.timeframe})
                     </span>
                   </div>
 
                   <div className="flex items-center gap-3">
                     <div className="text-right">
-                      <div className="num-mono text-sm font-bold text-brand-400">
-                        Punteggio Euristico: {sig.heuristicScore}/100
+                      <div className="num-mono text-sm font-bold text-brand-600 dark:text-brand-400">
+                        Score Euristico: {sig.heuristicScore}/100
                       </div>
-                      <div className="text-[10px] text-slate-500">
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">
                         Trend {sig.scoreBreakdown.trendScore} • Mom{' '}
                         {sig.scoreBreakdown.momentumScore} • Vol{' '}
-                        {sig.scoreBreakdown.volatilityRiskScore} • Qualità{' '}
+                        {sig.scoreBreakdown.volatilityRiskScore} • Dati{' '}
                         {sig.scoreBreakdown.dataQualityScore}
                       </div>
                     </div>
@@ -729,7 +736,7 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onOpenInstrument(sig.instrumentId)}
-                      className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-anthracite-950 hover:bg-brand-400"
+                      className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-anthracite-950 transition hover:bg-brand-400"
                     >
                       Apri Grafico
                     </button>
@@ -740,27 +747,27 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
                   {sig.quantitativeRationale}
                 </p>
 
-                <div className="mt-3 grid grid-cols-1 gap-3 border-t border-slate-200/70 pt-3 text-[11px] dark:border-slate-800 sm:grid-cols-3">
+                <div className="mt-3 grid grid-cols-1 gap-3 border-t border-slate-200/80 pt-3 text-[11px] dark:border-slate-800 sm:grid-cols-3">
                   <div>
-                    <div className="font-semibold text-emerald-400">Condizioni Soddisfatte:</div>
+                    <div className="font-semibold text-emerald-600 dark:text-emerald-400">Condizioni Soddisfatte:</div>
                     {sig.conditionsMet.map((c, idx) => (
-                      <div key={idx} className="mt-0.5 flex items-start gap-1 text-slate-400">
-                        <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-400" />
+                      <div key={idx} className="mt-0.5 flex items-start gap-1 text-slate-600 dark:text-slate-400">
+                        <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500 dark:text-emerald-400" />
                         <span>{c}</span>
                       </div>
                     ))}
                   </div>
 
                   <div>
-                    <div className="font-semibold text-amber-400">
-                      Condizioni Non Soddisfatte / Esclusioni:
+                    <div className="font-semibold text-amber-600 dark:text-amber-400">
+                      Condizioni Non Soddisfatte / Filtri:
                     </div>
                     {sig.conditionsUnmet.length === 0 ? (
-                      <div className="mt-0.5 text-slate-500">Tutte le condizioni primarie verificate.</div>
+                      <div className="mt-0.5 text-slate-500 dark:text-slate-400">Tutte le condizioni primarie verificate.</div>
                     ) : (
                       sig.conditionsUnmet.map((u, idx) => (
-                        <div key={idx} className="mt-0.5 flex items-start gap-1 text-slate-400">
-                          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-400" />
+                        <div key={idx} className="mt-0.5 flex items-start gap-1 text-slate-600 dark:text-slate-400">
+                          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-500 dark:text-amber-400" />
                           <span>{u}</span>
                         </div>
                       ))
@@ -768,14 +775,14 @@ export const OpportunitiesView: React.FC<OpportunitiesViewProps> = ({
                   </div>
 
                   <div>
-                    <div className="font-semibold text-red-400">Livelli & Rischi Principali:</div>
-                    <div className="num-mono mt-0.5 text-slate-300">
-                      Prezzo Osservato: {sig.observedPrice} {sig.currency} | Invalidazione:{' '}
-                      {sig.invalidationLevel ?? 'N/A'}
+                    <div className="font-semibold text-rose-600 dark:text-red-400">Livelli & Rischi:</div>
+                    <div className="num-mono mt-0.5 text-slate-700 dark:text-slate-300">
+                      Prezzo: {sig.observedPrice} {sig.currency} | Invalidazione:{' '}
+                      {sig.invalidationLevel ?? 'N/D'}
                     </div>
                     {sig.keyRisks.map((r, idx) => (
-                      <div key={idx} className="mt-0.5 flex items-start gap-1 text-slate-400">
-                        <ShieldAlert className="mt-0.5 h-3 w-3 shrink-0 text-red-400" />
+                      <div key={idx} className="mt-0.5 flex items-start gap-1 text-slate-600 dark:text-slate-400">
+                        <ShieldAlert className="mt-0.5 h-3 w-3 shrink-0 text-rose-500 dark:text-red-400" />
                         <span>{r}</span>
                       </div>
                     ))}

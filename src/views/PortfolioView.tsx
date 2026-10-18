@@ -7,6 +7,8 @@ import {
   Trash2,
   Upload,
   Wallet,
+  CheckCircle2,
+  Info,
 } from 'lucide-react';
 import {
   Bar,
@@ -20,6 +22,11 @@ import {
 import { useDemInvest } from '../context/DemInvestContext';
 import { exportPortfolioTransactionsCsv } from '../engines/portfolioEngine';
 import { PortfolioTransactionType } from '../types/domain';
+import {
+  formatFinancialCurrency,
+  formatFinancialPercent,
+  translateConcentrationLevel,
+} from '../lib/financialSemantics';
 
 export const PortfolioView: React.FC = () => {
   const {
@@ -92,11 +99,11 @@ export const PortfolioView: React.FC = () => {
           <div className="flex items-center gap-2">
             <Wallet className="h-5 w-5 text-brand-500" />
             <h1 className="text-lg font-bold text-slate-900 dark:text-white">
-              Portfolio Tracker Manuale & Analisi Rischio
+              Portfolio Tracker Manuale & Rischio
             </h1>
           </div>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Contabilità multi-valuta precisa con conversioni ufficiali BCE (Frankfurter API). Nessuna connessione automatica non autorizzata ai tuoi conti broker.
+            Contabilità multi-valuta con conversioni ufficiali BCE (Frankfurter API). I tuoi dati rimangono riservati e memorizzati solo nel tuo account protetto.
           </p>
         </div>
 
@@ -104,9 +111,9 @@ export const PortfolioView: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowCsvImport(!showCsvImport)}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold dark:border-slate-700 dark:bg-anthracite-900"
+            className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-anthracite-900 dark:text-slate-200 dark:hover:bg-anthracite-800"
           >
-            <Upload className="h-3.5 w-3.5 text-brand-400" />
+            <Upload className="h-3.5 w-3.5 text-brand-500" />
             Importa CSV
           </button>
           <button
@@ -122,15 +129,16 @@ export const PortfolioView: React.FC = () => {
 
       {/* Avviso Valutazione Incompleta o Concentrazione */}
       {portfolioAnalytics && portfolioAnalytics.concentrationRisk.warnings.length > 0 && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-xs text-amber-300">
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-800 dark:text-amber-300">
           <div className="flex items-center gap-2 font-bold">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
             <span>
-              Avvisi di Rischio Portafoglio & Completezza Valutazione (Stato:{' '}
-              {portfolioAnalytics.isValuationComplete ? 'COMPLETA' : 'VALUTAZIONE INCOMPLETA'})
+              {portfolioAnalytics.isValuationComplete
+                ? 'Avvisi sul Profilo di Rischio e Concentrazione'
+                : 'Valutazione Parziale delle Posizioni in Portafoglio'}
             </span>
           </div>
-          <ul className="mt-1.5 list-disc space-y-1 pl-5">
+          <ul className="mt-1.5 list-disc space-y-1 pl-5 text-slate-700 dark:text-slate-300">
             {portfolioAnalytics.concentrationRisk.warnings.map((w, i) => (
               <li key={i}>{w}</li>
             ))}
@@ -142,25 +150,25 @@ export const PortfolioView: React.FC = () => {
       {showCsvImport && (
         <form
           onSubmit={handleImportCsv}
-          className="rounded-2xl border border-slate-700 bg-anthracite-900 p-4 text-xs"
+          className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-700 dark:bg-anthracite-900"
         >
-          <div className="mb-2 font-bold text-brand-400">
+          <div className="mb-2 font-bold text-brand-500">
             Importa Transazioni Portafoglio da CSV:
           </div>
           <textarea
             rows={3}
             value={csvContent}
             onChange={(e) => setCsvContent(e.target.value)}
-            className="w-full rounded border border-slate-700 bg-anthracite-950 p-2 font-mono text-[11px] text-slate-200"
+            className="w-full rounded border border-slate-300 bg-white p-2 font-mono text-[11px] text-slate-900 dark:border-slate-700 dark:bg-anthracite-950 dark:text-slate-200"
           />
           <div className="mt-2 flex items-center justify-between">
             <button
               type="submit"
-              className="rounded-lg bg-brand-500 px-4 py-1.5 font-semibold text-anthracite-950"
+              className="rounded-lg bg-brand-500 px-4 py-1.5 font-semibold text-anthracite-950 hover:bg-brand-400"
             >
               Conferma Importazione CSV
             </button>
-            {csvFeedback && <span className="text-emerald-400">{csvFeedback}</span>}
+            {csvFeedback && <span className="text-emerald-600 dark:text-emerald-400 font-medium">{csvFeedback}</span>}
           </div>
         </form>
       )}
@@ -168,64 +176,74 @@ export const PortfolioView: React.FC = () => {
       {/* KPI Riepilogativi Portafoglio */}
       {portfolioAnalytics && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-anthracite-850">
-            <div className="text-xs text-slate-400">Capitale Investito a Costo</div>
-            <div className="num-mono mt-1 text-xl font-bold text-white">
-              {portfolioAnalytics.totalInvestedCostInBase.toFixed(2)}{' '}
-              {portfolioAnalytics.baseCurrency}
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
+            <div className="text-xs text-slate-500 dark:text-slate-400">Capitale a Costo</div>
+            <div className="num-mono mt-1 text-xl font-bold text-slate-900 dark:text-white">
+              {formatFinancialCurrency(portfolioAnalytics.totalInvestedCostInBase, portfolioAnalytics.baseCurrency)}
             </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              Liquidità: {portfolioAnalytics.cashBalanceInBase.toFixed(2)}{' '}
-              {portfolioAnalytics.baseCurrency}
+            <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+              Liquidità: {formatFinancialCurrency(portfolioAnalytics.cashBalanceInBase, portfolioAnalytics.baseCurrency)}
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-anthracite-850">
-            <div className="text-xs text-slate-400">Controvalore Mercato Stimato</div>
-            <div className="num-mono mt-1 text-xl font-bold text-brand-400">
-              {portfolioAnalytics.estimatedMarketValueInBase.toFixed(2)}{' '}
-              {portfolioAnalytics.baseCurrency}
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
+            <div className="text-xs text-slate-500 dark:text-slate-400">Controvalore Stimato</div>
+            <div className="num-mono mt-1 text-xl font-bold text-brand-600 dark:text-brand-400">
+              {formatFinancialCurrency(portfolioAnalytics.estimatedMarketValueInBase, portfolioAnalytics.baseCurrency)}
             </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              Stato: {portfolioAnalytics.isValuationComplete ? 'Prezzi Verificati' : 'Parziale'}
+            <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400">
+              {portfolioAnalytics.isValuationComplete ? (
+                <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 className="h-3 w-3" /> Quotazioni verificate
+                </span>
+              ) : (
+                <span className="text-amber-600 dark:text-amber-400">
+                  Parziale (prezzi di carico inclusi)
+                </span>
+              )}
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-anthracite-850">
-            <div className="text-xs text-slate-400">P&L Non Realizzato</div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
+            <div className="text-xs text-slate-500 dark:text-slate-400">P&L Non Realizzato</div>
             <div
               className={`num-mono mt-1 text-xl font-bold ${
                 portfolioAnalytics.unrealizedPnlInBase >= 0
-                  ? 'text-emerald-400'
-                  : 'text-red-400'
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-rose-600 dark:text-red-400'
               }`}
             >
-              {portfolioAnalytics.unrealizedPnlInBase >= 0 ? '+' : ''}
-              {portfolioAnalytics.unrealizedPnlInBase.toFixed(2)}{' '}
-              {portfolioAnalytics.baseCurrency} ({portfolioAnalytics.unrealizedPnlPct.toFixed(2)}%)
+              {formatFinancialCurrency(portfolioAnalytics.unrealizedPnlInBase, portfolioAnalytics.baseCurrency, { showPlus: true })}
+              <span className="text-xs font-semibold ml-1">
+                ({formatFinancialPercent(portfolioAnalytics.unrealizedPnlPct, { showPlus: true })})
+              </span>
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-anthracite-850">
-            <div className="text-xs text-slate-400">P&L Realizzato & Dividendi</div>
-            <div className="num-mono mt-1 text-sm font-bold text-white">
-              Realizzato: {portfolioAnalytics.realizedPnlInBase.toFixed(2)}{' '}
-              {portfolioAnalytics.baseCurrency}
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
+            <div className="text-xs text-slate-500 dark:text-slate-400">P&L Realizzato & Flussi</div>
+            <div className="num-mono mt-1 text-sm font-bold text-slate-900 dark:text-white">
+              Realizzato: {formatFinancialCurrency(portfolioAnalytics.realizedPnlInBase, portfolioAnalytics.baseCurrency, { showPlus: true })}
             </div>
-            <div className="num-mono mt-1 text-xs text-emerald-400">
-              Dividendi/Cedole: +{portfolioAnalytics.totalDividendsInBase.toFixed(2)} | Costi:{' '}
-              -{portfolioAnalytics.totalFeesPaidInBase.toFixed(2)}
+            <div className="num-mono mt-1 text-xs text-emerald-600 dark:text-emerald-400">
+              Cedole: +{formatFinancialCurrency(portfolioAnalytics.totalDividendsInBase, portfolioAnalytics.baseCurrency)}
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-anthracite-850">
-            <div className="text-xs text-slate-400">Rischio Concentrazione (HHI)</div>
-            <div className="num-mono mt-1 text-lg font-bold text-amber-400">
-              {portfolioAnalytics.concentrationRisk.concentrationLevel}
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
+            <div className="text-xs text-slate-500 dark:text-slate-400">Concentrazione (HHI)</div>
+            <div className="mt-1 flex items-center gap-1.5">
+              {(() => {
+                const tr = translateConcentrationLevel(portfolioAnalytics.concentrationRisk.concentrationLevel);
+                return (
+                  <span className={`inline-block rounded px-2 py-0.5 text-xs font-bold ${tr.className}`}>
+                    {tr.label}
+                  </span>
+                );
+              })()}
             </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              HHI: {portfolioAnalytics.concentrationRisk.herfindahlIndex}/10000 (Top:{' '}
-              {portfolioAnalytics.concentrationRisk.topPositionWeightPct}%)
+            <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+              Indice HHI: {portfolioAnalytics.concentrationRisk.herfindahlIndex} / 10.000 (Top: {portfolioAnalytics.concentrationRisk.topPositionWeightPct}%)
             </div>
           </div>
         </div>
@@ -235,10 +253,10 @@ export const PortfolioView: React.FC = () => {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <form
           onSubmit={handleAddTx}
-          className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-anthracite-850"
+          className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850"
         >
           <div className="flex items-center gap-2">
-            <Plus className="h-4 w-4 text-brand-400" />
+            <Plus className="h-4 w-4 text-brand-500" />
             <h3 className="text-sm font-bold text-slate-900 dark:text-white">
               Registra Operazione Manuale
             </h3>
@@ -246,28 +264,28 @@ export const PortfolioView: React.FC = () => {
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="mb-1 block text-[11px] text-slate-400">Tipo Operazione</label>
+              <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">Tipo Operazione</label>
               <select
                 value={txType}
                 onChange={(e) => setTxType(e.target.value as PortfolioTransactionType)}
-                className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-2.5 py-2 text-xs text-white"
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
               >
-                <option value="BUY">ACQUISTO (BUY)</option>
-                <option value="SELL">VENDITA (SELL)</option>
-                <option value="DIVIDEND">DIVIDENDO</option>
-                <option value="COUPON">CEDOLA</option>
-                <option value="FEE">COMMISSIONE</option>
-                <option value="DEPOSIT">DEPOSITO LIQUIDITÀ</option>
-                <option value="WITHDRAWAL">PRELIEVO LIQUIDITÀ</option>
+                <option value="BUY">Acquisto (Buy)</option>
+                <option value="SELL">Vendita (Sell)</option>
+                <option value="DIVIDEND">Dividendo</option>
+                <option value="COUPON">Cedola</option>
+                <option value="FEE">Commissione</option>
+                <option value="DEPOSIT">Deposito liquidità</option>
+                <option value="WITHDRAWAL">Prelievo liquidità</option>
               </select>
             </div>
 
             <div>
-              <label className="mb-1 block text-[11px] text-slate-400">Broker Dichiarato</label>
+              <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">Intermediario</label>
               <select
                 value={txBroker}
                 onChange={(e) => setTxBroker(e.target.value)}
-                className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-2.5 py-2 text-xs text-white"
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
               >
                 <option value="TRADE_REPUBLIC">Trade Republic</option>
                 <option value="IBKR">Interactive Brokers</option>
@@ -279,11 +297,11 @@ export const PortfolioView: React.FC = () => {
 
           {txType !== 'DEPOSIT' && txType !== 'WITHDRAWAL' && (
             <div>
-              <label className="mb-1 block text-[11px] text-slate-400">Strumento</label>
+              <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">Strumento</label>
               <select
                 value={txInstrumentId}
                 onChange={(e) => setTxInstrumentId(e.target.value)}
-                className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-2.5 py-2 text-xs text-white"
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
               >
                 {instruments.map((inst) => (
                   <option key={inst.id} value={inst.id}>
@@ -296,7 +314,7 @@ export const PortfolioView: React.FC = () => {
 
           <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="mb-1 block text-[11px] text-slate-400">Quantità</label>
+              <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">Quantità</label>
               <input
                 type="number"
                 step="any"
@@ -304,13 +322,13 @@ export const PortfolioView: React.FC = () => {
                 value={txQuantity}
                 onChange={(e) => setTxQuantity(e.target.value)}
                 data-testid="portfolio-qty-input"
-                className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-2.5 py-2 text-xs text-white"
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-[11px] text-slate-400">
-                Prezzo / Importo
+              <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                Prezzo unitario
               </label>
               <input
                 type="number"
@@ -319,16 +337,16 @@ export const PortfolioView: React.FC = () => {
                 value={txPrice}
                 onChange={(e) => setTxPrice(e.target.value)}
                 data-testid="portfolio-price-input"
-                className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-2.5 py-2 text-xs text-white"
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-[11px] text-slate-400">Valuta</label>
+              <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">Valuta</label>
               <select
                 value={txCurrency}
                 onChange={(e) => setTxCurrency(e.target.value)}
-                className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-2 py-2 text-xs text-white"
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
               >
                 <option value="EUR">EUR</option>
                 <option value="USD">USD</option>
@@ -340,7 +358,7 @@ export const PortfolioView: React.FC = () => {
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="mb-1 block text-[11px] text-slate-400">
+              <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
                 Commissioni ({txCurrency})
               </label>
               <input
@@ -348,17 +366,17 @@ export const PortfolioView: React.FC = () => {
                 step="any"
                 value={txFees}
                 onChange={(e) => setTxFees(e.target.value)}
-                className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-2.5 py-2 text-xs text-white"
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
               />
             </div>
             <div>
-              <label className="mb-1 block text-[11px] text-slate-400">Note</label>
+              <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">Note</label>
               <input
                 type="text"
                 value={txNotes}
                 onChange={(e) => setTxNotes(e.target.value)}
-                placeholder="Opzionale..."
-                className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-2.5 py-2 text-xs text-white"
+                placeholder="Es. Accumulo periodico..."
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
               />
             </div>
           </div>
@@ -366,52 +384,52 @@ export const PortfolioView: React.FC = () => {
           <button
             type="submit"
             data-testid="portfolio-submit-tx-btn"
-            className="w-full rounded-xl bg-brand-500 py-2.5 text-xs font-bold text-anthracite-950 hover:bg-brand-400"
+            className="w-full rounded-xl bg-brand-500 py-2.5 text-xs font-bold text-anthracite-950 transition hover:bg-brand-400"
           >
-            Registra Operazione nel Portafoglio
+            Registra operazione
           </button>
         </form>
 
         {/* Posizioni Attive & Allocazione */}
         <div className="space-y-6 lg:col-span-2">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-anthracite-850">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
             <h3 className="mb-3 text-sm font-bold text-slate-900 dark:text-white">
-              Posizioni in Portafoglio & Conversioni Valutarie BCE
+              Posizioni in Portafoglio
             </h3>
 
             {portfolioAnalytics && portfolioAnalytics.positions.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
-                    <tr className="border-b border-slate-800 text-[11px] text-slate-400">
-                      <th className="pb-2">Strumento / Broker</th>
+                    <tr className="border-b border-slate-200 text-[11px] text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                      <th className="pb-2">Strumento</th>
                       <th className="pb-2 text-right">Q.tà</th>
-                      <th className="pb-2 text-right">PMC Carico</th>
-                      <th className="pb-2 text-right">Prezzo Attuale</th>
-                      <th className="pb-2 text-right">Valore (EUR)</th>
-                      <th className="pb-2 text-right">P&L (EUR)</th>
+                      <th className="pb-2 text-right">Prezzo medio</th>
+                      <th className="pb-2 text-right">Prezzo live</th>
+                      <th className="pb-2 text-right">Controvalore</th>
+                      <th className="pb-2 text-right">P&L</th>
                       <th className="pb-2 text-right">Peso %</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                     {portfolioAnalytics.positions.map((pos) => (
                       <tr key={`${pos.instrumentId}_${pos.declaredBrokerCode}`}>
                         <td className="py-2.5">
-                          <div className="font-bold text-white">{pos.ticker}</div>
-                          <div className="text-[10px] text-slate-500">
-                            {pos.declaredBrokerCode} • FX: {pos.fxRateToBase} ({pos.fxSource})
+                          <div className="font-bold text-slate-900 dark:text-white">{pos.ticker}</div>
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                            {pos.declaredBrokerCode} • Tasso BCE: {pos.fxRateToBase}
                           </div>
                         </td>
-                        <td className="num-mono py-2.5 text-right">{pos.quantity}</td>
-                        <td className="num-mono py-2.5 text-right">
+                        <td className="num-mono py-2.5 text-right font-medium text-slate-700 dark:text-slate-300">{pos.quantity}</td>
+                        <td className="num-mono py-2.5 text-right text-slate-700 dark:text-slate-300">
                           {pos.averageCostPrice} {pos.costCurrency}
                         </td>
-                        <td className="num-mono py-2.5 text-right">
+                        <td className="num-mono py-2.5 text-right text-slate-700 dark:text-slate-300">
                           {pos.currentMarketPrice !== null
                             ? `${pos.currentMarketPrice} ${pos.quoteCurrency}`
                             : 'Non disp.'}
                         </td>
-                        <td className="num-mono py-2.5 text-right font-semibold text-white">
+                        <td className="num-mono py-2.5 text-right font-semibold text-slate-900 dark:text-white">
                           {pos.estimatedMarketValueInBase !== null
                             ? `${pos.estimatedMarketValueInBase.toFixed(2)} €`
                             : 'Incompleto'}
@@ -419,15 +437,15 @@ export const PortfolioView: React.FC = () => {
                         <td
                           className={`num-mono py-2.5 text-right font-bold ${
                             (pos.unrealizedPnlInBase ?? 0) >= 0
-                              ? 'text-emerald-400'
-                              : 'text-red-400'
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : 'text-rose-600 dark:text-red-400'
                           }`}
                         >
                           {pos.unrealizedPnlInBase !== null
                             ? `${pos.unrealizedPnlInBase >= 0 ? '+' : ''}${pos.unrealizedPnlInBase.toFixed(2)} € (${pos.unrealizedPnlPct?.toFixed(2)}%)`
                             : '—'}
                         </td>
-                        <td className="num-mono py-2.5 text-right">
+                        <td className="num-mono py-2.5 text-right font-medium text-slate-700 dark:text-slate-300">
                           {pos.allocationWeightPct}%
                         </td>
                       </tr>
@@ -436,29 +454,31 @@ export const PortfolioView: React.FC = () => {
                 </table>
               </div>
             ) : (
-              <p className="text-xs text-slate-500">Nessuna posizione attiva.</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Nessuna posizione registrata. Inserisci una prima operazione con il modulo a sinistra.</p>
             )}
           </div>
 
           {/* Grafico Allocazione per Asset Class e Valuta */}
           {portfolioAnalytics && portfolioAnalytics.assetClassAllocation.length > 0 && (
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-anthracite-850">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
               <div className="mb-3 flex items-center gap-2">
-                <PieChartIcon className="h-4 w-4 text-brand-400" />
-                <h4 className="text-xs font-bold uppercase text-slate-300">
-                  Allocazione per Classe d'Investimento & Esposizione Valutaria
+                <PieChartIcon className="h-4 w-4 text-brand-500" />
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  Allocazione per Classe d'Investimento
                 </h4>
               </div>
               <div className="h-48 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={portfolioAnalytics.assetClassAllocation}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#94a3b8" opacity={0.2} />
                     <XAxis dataKey="assetClass" stroke="#94a3b8" fontSize={11} />
                     <YAxis stroke="#94a3b8" fontSize={11} />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: '#0d0f12',
-                        borderColor: '#1e293b',
+                        backgroundColor: '#0f172a',
+                        borderColor: '#334155',
+                        color: '#f8fafc',
+                        borderRadius: '8px',
                         fontSize: '12px',
                       }}
                     />
@@ -472,45 +492,46 @@ export const PortfolioView: React.FC = () => {
       </div>
 
       {/* Registro Storico Transazioni */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-anthracite-850">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
         <h3 className="mb-3 text-sm font-bold text-slate-900 dark:text-white">
-          Storico Movimenti Contabili ({portfolioTransactions.length})
+          Storico Movimenti ({portfolioTransactions.length})
         </h3>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
-              <tr className="border-b border-slate-800 text-[11px] text-slate-400">
+              <tr className="border-b border-slate-200 text-[11px] text-slate-500 dark:border-slate-800 dark:text-slate-400">
                 <th className="pb-2">Data</th>
                 <th className="pb-2">Tipo</th>
                 <th className="pb-2">Strumento</th>
                 <th className="pb-2 text-right">Quantità</th>
                 <th className="pb-2 text-right">Prezzo Unitario</th>
                 <th className="pb-2 text-right">Commissioni</th>
-                <th className="pb-2">Broker</th>
+                <th className="pb-2">Intermediario</th>
                 <th className="pb-2 text-right">Azioni</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
               {portfolioTransactions.map((tx) => (
                 <tr key={tx.id}>
-                  <td className="py-2 font-mono text-[11px] text-slate-400">
+                  <td className="py-2 font-mono text-[11px] text-slate-500 dark:text-slate-400">
                     {tx.executedAt.slice(0, 10)}
                   </td>
-                  <td className="py-2 font-bold text-brand-400">{tx.transactionType}</td>
-                  <td className="py-2">{tx.instrumentTicker || 'Liquidità'}</td>
-                  <td className="num-mono py-2 text-right">{tx.quantity}</td>
-                  <td className="num-mono py-2 text-right">
+                  <td className="py-2 font-bold text-brand-600 dark:text-brand-400">{tx.transactionType}</td>
+                  <td className="py-2 font-medium text-slate-900 dark:text-slate-200">{tx.instrumentTicker || 'Liquidità'}</td>
+                  <td className="num-mono py-2 text-right text-slate-700 dark:text-slate-300">{tx.quantity}</td>
+                  <td className="num-mono py-2 text-right text-slate-700 dark:text-slate-300">
                     {tx.unitPrice} {tx.currency}
                   </td>
-                  <td className="num-mono py-2 text-right">
+                  <td className="num-mono py-2 text-right text-slate-700 dark:text-slate-300">
                     {tx.fees} {tx.currency}
                   </td>
-                  <td className="py-2 text-slate-400">{tx.declaredBrokerCode}</td>
+                  <td className="py-2 text-slate-500 dark:text-slate-400">{tx.declaredBrokerCode}</td>
                   <td className="py-2 text-right">
                     <button
                       type="button"
                       onClick={() => deletePortfolioTransaction(tx.id)}
-                      className="text-slate-500 hover:text-red-400"
+                      className="text-slate-400 hover:text-rose-500 transition"
+                      title="Elimina movimento"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

@@ -197,16 +197,16 @@ export const TradingLabView: React.FC = () => {
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-anthracite-850">
-              <div className="text-xs text-slate-400">Liquidità Virtuale Disponibile</div>
-              <div className="num-mono mt-1 text-xl font-bold text-brand-400">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
+              <div className="text-xs text-slate-500 dark:text-slate-400">Liquidità Virtuale Disponibile</div>
+              <div className="num-mono mt-1 text-xl font-bold text-brand-600 dark:text-brand-400">
                 {paperAccount.cashBalance.toFixed(2)} {paperAccount.baseCurrency}
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-anthracite-850">
-              <div className="text-xs text-slate-400">P&L Realizzato / Non Realizzato</div>
-              <div className="num-mono mt-1 text-sm font-bold text-white">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
+              <div className="text-xs text-slate-500 dark:text-slate-400">P&L Realizzato / Non Realizzato</div>
+              <div className="num-mono mt-1 text-sm font-bold text-slate-900 dark:text-white">
                 Real: {paperAccount.realizedPnlTotal >= 0 ? '+' : ''}
                 {paperAccount.realizedPnlTotal.toFixed(2)} | Unreal:{' '}
                 {paperAccount.unrealizedPnlTotal >= 0 ? '+' : ''}
@@ -214,17 +214,17 @@ export const TradingLabView: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-anthracite-850">
+            <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
               <div>
-                <div className="text-xs text-slate-400">Max Drawdown Simulato</div>
-                <div className="num-mono mt-1 text-lg font-bold text-red-400">
+                <div className="text-xs text-slate-500 dark:text-slate-400">Max Drawdown Simulato</div>
+                <div className="num-mono mt-1 text-lg font-bold text-rose-600 dark:text-red-400">
                   -{paperAccount.maxDrawdownPct.toFixed(2)}%
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => resetPaperAccount(25000)}
-                className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-white"
+                className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
               >
                 <RotateCcw className="h-3 w-3" /> Ripristina Conto (25.000 USD)
               </button>
@@ -235,18 +235,18 @@ export const TradingLabView: React.FC = () => {
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <form
               onSubmit={handlePaperSubmit}
-              className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-anthracite-850"
+              className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850"
             >
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                 Nuova Operazione Simulata (Paper Order)
               </h3>
 
               <div>
-                <label className="mb-1 block text-xs text-slate-400">Strumento</label>
+                <label className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">Strumento</label>
                 <select
                   value={paperInstId}
                   onChange={(e) => setPaperInstId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-3 py-2 text-xs text-white"
+                  className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
                 >
                   {instruments.map((inst) => (
                     <option key={inst.id} value={inst.id}>
@@ -255,8 +255,8 @@ export const TradingLabView: React.FC = () => {
                   ))}
                 </select>
                 {selectedPaperQuote && selectedPaperQuote.validity === 'VALID' && (
-                  <div className="num-mono mt-1 text-[11px] text-brand-400">
-                    Prezzo di riferimento verificato: {selectedPaperQuote.price}{' '}
+                  <div className="num-mono mt-1 text-[11px] text-brand-600 dark:text-brand-400">
+                    Prezzo di riferimento: {selectedPaperQuote.price}{' '}
                     {selectedPaperQuote.currency} ({selectedPaperQuote.providerName})
                   </div>
                 )}
@@ -268,22 +268,22 @@ export const TradingLabView: React.FC = () => {
                     key={s}
                     type="button"
                     onClick={() => setPaperSide(s)}
-                    className={`rounded-lg py-2 text-xs font-bold ${
+                    className={`rounded-lg py-2 text-xs font-bold transition ${
                       paperSide === s
                         ? s === 'BUY'
-                          ? 'bg-emerald-500 text-anthracite-950'
-                          : 'bg-red-500 text-white'
-                        : 'bg-anthracite-900 text-slate-400'
+                          ? 'bg-emerald-500 text-anthracite-950 font-bold'
+                          : 'bg-rose-500 text-white font-bold'
+                        : 'bg-slate-100 text-slate-600 dark:bg-anthracite-900 dark:text-slate-400'
                     }`}
                   >
-                    {s === 'BUY' ? 'ACQUISTO SIMULATO (BUY)' : 'VENDITA SIMULATA (SELL)'}
+                    {s === 'BUY' ? 'Acquisto (Buy)' : 'Vendita (Sell)'}
                   </button>
                 ))}
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="mb-1 block text-[11px] text-slate-400">Quantità</label>
+                  <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">Quantità</label>
                   <input
                     type="number"
                     step="any"
@@ -291,11 +291,11 @@ export const TradingLabView: React.FC = () => {
                     value={paperQty}
                     onChange={(e) => setPaperQty(e.target.value)}
                     data-testid="paper-qty-input"
-                    className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-3 py-2 text-xs text-white"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-[11px] text-slate-400">
+                  <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
                     Commissione (%)
                   </label>
                   <input
@@ -303,14 +303,14 @@ export const TradingLabView: React.FC = () => {
                     step="any"
                     value={paperCommissionPct}
                     onChange={(e) => setPaperCommissionPct(e.target.value)}
-                    className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-3 py-2 text-xs text-white"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="mb-1 block text-[11px] text-slate-400">
+                  <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
                     Spread Simulato (bps)
                   </label>
                   <input
@@ -318,46 +318,46 @@ export const TradingLabView: React.FC = () => {
                     step="any"
                     value={paperSpreadBps}
                     onChange={(e) => setPaperSpreadBps(e.target.value)}
-                    className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-3 py-2 text-xs text-white"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-[11px] text-slate-400">
-                    Slippage Parametrico (bps)
+                  <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    Slippage (bps)
                   </label>
                   <input
                     type="number"
                     step="any"
                     value={paperSlippageBps}
                     onChange={(e) => setPaperSlippageBps(e.target.value)}
-                    className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-3 py-2 text-xs text-white"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="mb-1 block text-[11px] text-slate-400">
-                  Motivazione / Ipotesi Operativa
+                <label className="mb-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                  Motivazione / Ipotesi
                 </label>
                 <input
                   type="text"
                   value={paperNotes}
                   onChange={(e) => setPaperNotes(e.target.value)}
                   placeholder="Es. Test ingresso pullback su SMA20..."
-                  className="w-full rounded-lg border border-slate-700 bg-anthracite-900 px-3 py-2 text-xs text-white"
+                  className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
                 />
               </div>
 
               <button
                 type="submit"
                 data-testid="paper-submit-btn"
-                className="w-full rounded-xl bg-brand-500 py-2.5 text-xs font-bold text-anthracite-950 hover:bg-brand-400"
+                className="w-full rounded-xl bg-brand-500 py-2.5 text-xs font-bold text-anthracite-950 transition hover:bg-brand-400"
               >
                 Simula Ordine in Paper Trading
               </button>
 
               {paperFeedback && (
-                <div className="rounded-lg bg-slate-800 p-2.5 text-[11px] text-emerald-300">
+                <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-2.5 text-[11px] text-emerald-700 dark:text-emerald-300">
                   {paperFeedback}
                 </div>
               )}
@@ -365,19 +365,19 @@ export const TradingLabView: React.FC = () => {
 
             {/* Posizioni Aperte e Storico Ordini Simulati */}
             <div className="space-y-6 lg:col-span-2">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-anthracite-850">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
                 <h3 className="mb-3 text-sm font-bold text-slate-900 dark:text-white">
                   Posizioni Virtuali Aperte ({paperAccount.positions.length})
                 </h3>
                 {paperAccount.positions.length === 0 ? (
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     Nessuna posizione simulata aperta. Usa il modulo a sinistra per simulare un'operazione.
                   </p>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
                       <thead>
-                        <tr className="border-b border-slate-800 text-[11px] text-slate-400">
+                        <tr className="border-b border-slate-200 text-[11px] text-slate-500 dark:border-slate-800 dark:text-slate-400">
                           <th className="pb-2">Strumento</th>
                           <th className="pb-2 text-right">Quantità</th>
                           <th className="pb-2 text-right">Prezzo Carico Sim.</th>
@@ -385,20 +385,20 @@ export const TradingLabView: React.FC = () => {
                           <th className="pb-2 text-right">P&L Non Realizzato</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-800/60">
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                         {paperAccount.positions.map((p) => (
                           <tr key={p.instrumentId}>
-                            <td className="py-2.5 font-bold text-white">{p.ticker}</td>
-                            <td className="num-mono py-2.5 text-right">{p.quantity}</td>
-                            <td className="num-mono py-2.5 text-right">
+                            <td className="py-2.5 font-bold text-slate-900 dark:text-white">{p.ticker}</td>
+                            <td className="num-mono py-2.5 text-right text-slate-700 dark:text-slate-300">{p.quantity}</td>
+                            <td className="num-mono py-2.5 text-right text-slate-700 dark:text-slate-300">
                               {p.averageEntryPrice} {p.currency}
                             </td>
-                            <td className="num-mono py-2.5 text-right">
+                            <td className="num-mono py-2.5 text-right text-slate-700 dark:text-slate-300">
                               {p.currentPrice ?? p.averageEntryPrice} {p.currency}
                             </td>
                             <td
                               className={`num-mono py-2.5 text-right font-bold ${
-                                (p.unrealizedPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'
+                                (p.unrealizedPnl ?? 0) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-red-400'
                               }`}
                             >
                               {p.unrealizedPnl ?? 0} {p.currency} ({p.unrealizedPnlPct ?? 0}%)

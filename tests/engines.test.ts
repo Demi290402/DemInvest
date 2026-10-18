@@ -263,6 +263,91 @@ describe('DemInvest — Portafoglio, Rendimenti, Importi e Conversioni Valutarie
     });
     expect(incompleteSummary.isValuationComplete).toBe(false);
     expect(incompleteSummary.incompletePositionsCount).toBe(1);
+
+    // Test specifico Master Prompt 5: Verifica indice HHI sempre <= 10000 e normalizzazione corretta
+    const singlePosSummary = calculatePortfolioAnalytics({
+      transactions: [
+        {
+          id: 'T_SINGLE',
+          instrumentId: 'INST_BTC_USD_SPOT',
+          transactionType: 'BUY',
+          quantity: 1,
+          unitPrice: 50000,
+          fees: 0,
+          currency: 'EUR',
+          fxRateToBase: 1,
+          fxSource: 'IDENTITY',
+          fxObservedAt: '2026-10-01T10:00:00Z',
+          declaredBrokerCode: 'DEFAULT',
+          executedAt: '2026-10-01T10:00:00Z',
+        },
+      ],
+      quotesByInstrumentId: {},
+      fxTable: mockFxTable,
+    });
+    // Con 1 sola posizione al 100%, HHI deve essere esattamente 10.000 e non superarlo MAI
+    expect(singlePosSummary.concentrationRisk.herfindahlIndex).toBe(10000);
+    expect(singlePosSummary.concentrationRisk.topPositionWeightPct).toBe(100);
+    expect(singlePosSummary.concentrationRisk.concentrationLevel).toBe('HIGH_CONCENTRATION_RISK');
+
+    // Test con posizioni miste (una con prezzo verificato e una senza prezzo) che in precedenza causava 16931/10000
+    const mixedSummary = calculatePortfolioAnalytics({
+      transactions: [
+        {
+          id: 'T_PRICED',
+          instrumentId: 'INST_BTC_USD_SPOT',
+          transactionType: 'BUY',
+          quantity: 0.1,
+          unitPrice: 50000,
+          fees: 0,
+          currency: 'USD',
+          fxRateToBase: 1,
+          fxSource: 'IDENTITY',
+          fxObservedAt: '2026-10-01T10:00:00Z',
+          declaredBrokerCode: 'DEFAULT',
+          executedAt: '2026-10-01T10:00:00Z',
+        },
+        {
+          id: 'T_UNPRICED',
+          instrumentId: 'INST_AAPL_XNAS_EQ',
+          transactionType: 'BUY',
+          quantity: 20,
+          unitPrice: 200,
+          fees: 0,
+          currency: 'USD',
+          fxRateToBase: 1,
+          fxSource: 'IDENTITY',
+          fxObservedAt: '2026-10-01T10:00:00Z',
+          declaredBrokerCode: 'DEFAULT',
+          executedAt: '2026-10-01T10:00:00Z',
+        },
+      ],
+      quotesByInstrumentId: {
+        INST_BTC_USD_SPOT: btcQuote, // ha quotazione a 80.000 USD -> market value 8000 USD
+        // AAPL non ha quote -> usa totalCostBasis = 4000 USD
+      },
+      fxTable: mockFxTable,
+    });
+    // Somma valori di riferimento = 8000 * 0.9 + 4000 * 0.9 = 7200 + 3600 = 10800 EUR
+    // BTC = 7200/10800 = 66.67%, AAPL = 3600/10800 = 33.33%
+    // HHI = 66.67^2 + 33.33^2 = 4444.89 + 1110.89 = 5556 <= 10000
+    expect(mixedSummary.concentrationRisk.herfindahlIndex).toBeLessThanOrEqual(10000);
+    expect(mixedSummary.concentrationRisk.herfindahlIndex).toBeGreaterThan(0);
+    expect(mixedSummary.concentrationRisk.topPositionWeightPct).toBeLessThanOrEqual(100);
+
+    // Test con 4 posizioni identiche -> HHI atteso = 4 * (25^2) = 2500
+    const fourEqualSummary = calculatePortfolioAnalytics({
+      transactions: [
+        { id: 'T1', instrumentId: 'INST_BTC_USD_SPOT', transactionType: 'BUY', quantity: 1, unitPrice: 1000, fees: 0, currency: 'EUR', fxRateToBase: 1, fxSource: 'ID', fxObservedAt: '2026-10-01T10:00:00Z', declaredBrokerCode: 'DEF', executedAt: '2026-10-01T10:00:00Z' },
+        { id: 'T2', instrumentId: 'INST_ETH_USD_SPOT', transactionType: 'BUY', quantity: 1, unitPrice: 1000, fees: 0, currency: 'EUR', fxRateToBase: 1, fxSource: 'ID', fxObservedAt: '2026-10-01T10:00:00Z', declaredBrokerCode: 'DEF', executedAt: '2026-10-01T10:00:00Z' },
+        { id: 'T3', instrumentId: 'INST_AAPL_XNAS_EQ', transactionType: 'BUY', quantity: 1, unitPrice: 1000, fees: 0, currency: 'EUR', fxRateToBase: 1, fxSource: 'ID', fxObservedAt: '2026-10-01T10:00:00Z', declaredBrokerCode: 'DEF', executedAt: '2026-10-01T10:00:00Z' },
+        { id: 'T4', instrumentId: 'INST_MSFT_XNAS_EQ', transactionType: 'BUY', quantity: 1, unitPrice: 1000, fees: 0, currency: 'EUR', fxRateToBase: 1, fxSource: 'ID', fxObservedAt: '2026-10-01T10:00:00Z', declaredBrokerCode: 'DEF', executedAt: '2026-10-01T10:00:00Z' },
+      ],
+      quotesByInstrumentId: {},
+      fxTable: mockFxTable,
+    });
+    expect(fourEqualSummary.concentrationRisk.herfindahlIndex).toBe(2500);
+    expect(fourEqualSummary.concentrationRisk.topPositionWeightPct).toBe(25);
   });
 });
 

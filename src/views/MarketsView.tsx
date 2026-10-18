@@ -27,6 +27,14 @@ import {
 import { DEFAULT_TIME_HORIZON_CONFIGS } from '../engines/signalIntelligenceEngine';
 import { detectMarketRegime } from '../engines/marketIntelligenceEngine';
 import { TradingViewChart } from '../components/TradingViewChart';
+import {
+  translateMarketRegime,
+  translateVolatilityRegime,
+  translateSignalClassification,
+  translateSignalStatus,
+  translateDataFreshness,
+  translateStrategyName,
+} from '../lib/financialSemantics';
 
 export const MarketsView: React.FC = () => {
   const {
@@ -388,8 +396,9 @@ export const MarketsView: React.FC = () => {
                       </div>
                     </>
                   ) : (
-                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                      Quotazione LIVE Sospesa: {detailQuote?.statusMessage || 'Configura Provider'}
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 dark:border-slate-800 dark:bg-anthracite-900 dark:text-slate-300">
+                      <div className="font-semibold text-slate-900 dark:text-white">Dato indicativo o in attesa di feed</div>
+                      <div className="text-[11px] text-slate-500">{detailQuote?.statusMessage || 'La quotazione live è in attesa di aggiornamento.'}</div>
                     </div>
                   )}
 
@@ -400,8 +409,8 @@ export const MarketsView: React.FC = () => {
                       data-testid="toggle-watchlist-btn"
                       className={`inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
                         watchlistInstrumentIds.includes(currentInstrument.id)
-                          ? 'border-amber-400/50 bg-amber-400/15 text-amber-300'
-                          : 'border-slate-700 bg-anthracite-900 text-slate-300'
+                          ? 'border-amber-400/50 bg-amber-400/15 text-amber-600 dark:text-amber-300'
+                          : 'border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-anthracite-900 dark:text-slate-300'
                       }`}
                     >
                       <Star className="h-3.5 w-3.5" />
@@ -413,7 +422,7 @@ export const MarketsView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setIsAiDrawerOpen(true)}
-                      className="inline-flex items-center gap-1 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-anthracite-950 hover:bg-brand-400"
+                      className="inline-flex items-center gap-1 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-anthracite-950 transition hover:bg-brand-400"
                     >
                       <Bot className="h-3.5 w-3.5" />
                       Chiedi a DemInvest AI
@@ -512,44 +521,56 @@ export const MarketsView: React.FC = () => {
                   return (
                     <div
                       data-testid="market-regime-panel"
-                      className="mb-4 grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs dark:border-slate-800 dark:bg-anthracite-900 sm:grid-cols-3"
+                      className="mb-4 grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-800 dark:bg-anthracite-900 sm:grid-cols-3"
                     >
                       <div>
-                        <div className="text-[10px] font-bold uppercase text-slate-400">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                           Regime Direzionale
                         </div>
-                        <div className="mt-0.5 font-mono text-xs font-bold text-brand-400">
-                          {effectiveRegime.directionalRegime}
+                        <div className="mt-1 flex items-center gap-1.5">
+                          {(() => {
+                            const tr = translateMarketRegime(effectiveRegime.directionalRegime);
+                            return (
+                              <span className={`inline-block font-semibold ${tr.colorClass.split(' ')[0]}`}>
+                                {uiMode === 'SIMPLE' ? tr.label : effectiveRegime.directionalRegime}
+                              </span>
+                            );
+                          })()}
                         </div>
-                        <div className="mt-0.5 text-[10px] text-slate-400">
+                        <div className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
                           {effectiveRegime.explanation}
                         </div>
                       </div>
+
                       <div>
-                        <div className="text-[10px] font-bold uppercase text-slate-400">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                           Regime di Volatilità
                         </div>
-                        <div className="mt-0.5 font-mono text-xs font-bold text-slate-900 dark:text-white">
-                          {effectiveRegime.volatilityRegime}
+                        <div className="mt-1 font-semibold text-slate-900 dark:text-white">
+                          {(() => {
+                            const tr = translateVolatilityRegime(effectiveRegime.volatilityRegime);
+                            return uiMode === 'SIMPLE' ? tr.label : effectiveRegime.volatilityRegime;
+                          })()}
                         </div>
-                        <div className="mt-0.5 text-[10px] text-slate-400">
+                        <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                           {detailIntelligence
-                            ? `Fascia Rischio: ${detailIntelligence.riskReport.riskBand} (Score ${detailIntelligence.riskReport.overallRiskScore}/100)`
-                            : `Confidenza Regime: ${effectiveRegime.regimeConfidenceScore}/100`}
+                            ? `Livello rischio: ${detailIntelligence.riskReport.riskBand} (Punteggio: ${detailIntelligence.riskReport.overallRiskScore}/100)`
+                            : `Confidenza: ${effectiveRegime.regimeConfidenceScore}/100`}
                         </div>
                       </div>
+
                       <div>
-                        <div className="text-[10px] font-bold uppercase text-slate-400">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                           {detailIntelligence
-                            ? `Coerenza Multi-Timeframe (${detailIntelligence.multiTimeframe.operationalTimeframe} → ${detailIntelligence.multiTimeframe.higherConfirmationTimeframe})`
-                            : 'Allineamento Strutturale Medie'}
+                            ? `Coerenza Temporale (${detailIntelligence.multiTimeframe.operationalTimeframe} → ${detailIntelligence.multiTimeframe.higherConfirmationTimeframe})`
+                            : 'Allineamento Medie'}
                         </div>
-                        <div className="mt-0.5 font-mono text-xs font-bold text-emerald-400">
+                        <div className="mt-1 font-semibold text-emerald-600 dark:text-emerald-400">
                           {detailIntelligence
-                            ? detailIntelligence.multiTimeframe.consensusState
-                            : effectiveRegime.maAlignment}
+                            ? detailIntelligence.multiTimeframe.consensusState.replace(/_/g, ' ')
+                            : effectiveRegime.maAlignment.replace(/_/g, ' ')}
                         </div>
-                        <div className="mt-0.5 text-[10px] text-slate-400">
+                        <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                           {detailIntelligence
                             ? detailIntelligence.multiTimeframe.summary
                             : `Compatibile con: ${effectiveRegime.compatibleStrategies.join(', ')}`}
@@ -745,27 +766,29 @@ export const MarketsView: React.FC = () => {
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Signal Intelligence ({activeHorizon})
+                    Analisi di Scenario ({activeHorizon})
                   </span>
                   <span
                     className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
                       detailSignal.signalType === 'BUY_SETUP' ||
                       detailSignal.signalType === 'BREAKOUT_ALERT'
-                        ? 'bg-emerald-500/15 text-emerald-400'
+                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                         : detailSignal.signalType === 'NO_TRADE'
-                          ? 'bg-slate-500/20 text-slate-300'
-                          : 'bg-amber-500/15 text-amber-400'
+                          ? 'bg-slate-500/15 text-slate-600 dark:text-slate-300'
+                          : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
                     }`}
                   >
-                    {detailSignal.signalType}
+                    {uiMode === 'SIMPLE'
+                      ? translateSignalClassification(detailSignal.signalType).shortLabel
+                      : detailSignal.signalType}
                   </span>
                 </div>
 
                 <div className="mt-2 flex items-baseline justify-between">
-                  <div className="text-xs text-slate-400">
-                    Stato: <strong className="text-white">{detailSignal.status}</strong>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    Stato: <strong className="text-slate-900 dark:text-white">{translateSignalStatus(detailSignal.status).label}</strong>
                   </div>
-                  <div className="num-mono text-sm font-bold text-brand-400">
+                  <div className="num-mono text-sm font-bold text-brand-600 dark:text-brand-400">
                     Punteggio Euristico: {detailSignal.heuristicScore}/100
                   </div>
                 </div>
@@ -779,15 +802,14 @@ export const MarketsView: React.FC = () => {
 
                 {detailIntelligence?.bestStrategySetup && (
                   <div className="mt-3 rounded-lg border border-brand-500/25 bg-brand-500/5 p-3 text-[11px]">
-                    <div className="flex items-center justify-between font-bold text-brand-400">
+                    <div className="flex items-center justify-between font-bold text-brand-600 dark:text-brand-400">
                       <span>
-                        Strategia V3: {detailIntelligence.bestStrategySetup.strategyName} (v
-                        {detailIntelligence.bestStrategySetup.strategyVersion})
+                        Strategia: {translateStrategyName(detailIntelligence.bestStrategySetup.strategyName).name}
                       </span>
                       <span>{detailIntelligence.bestStrategySetup.signalClassification}</span>
                     </div>
                     {detailIntelligence.bestStrategySetup.sellDistinction !== 'NOT_APPLICABLE' && (
-                      <div className="mt-1 font-semibold text-amber-300">
+                      <div className="mt-1 font-semibold text-amber-600 dark:text-amber-300">
                         Distinzione Segnale Ribassista:{' '}
                         {detailIntelligence.bestStrategySetup.sellDistinction ===
                         'EXISTING_POSITION_EXIT'
@@ -795,7 +817,7 @@ export const MarketsView: React.FC = () => {
                           : 'Segnale Tecnico Ribassista di Mercato (Non Short Automatico)'}
                       </div>
                     )}
-                    <div className="num-mono mt-1 text-slate-300">
+                    <div className="num-mono mt-1 text-slate-600 dark:text-slate-300">
                       Invalidazione: {detailIntelligence.bestStrategySetup.invalidationPrice ?? 'N/D'}{' '}
                       | Target:{' '}
                       {detailIntelligence.bestStrategySetup.targetLevels
@@ -807,11 +829,11 @@ export const MarketsView: React.FC = () => {
 
                 <div className="mt-3 space-y-2 text-xs">
                   <div>
-                    <div className="font-semibold text-emerald-400">Condizioni Soddisfatte:</div>
-                    <ul className="mt-1 space-y-1 text-[11px] text-slate-400">
+                    <div className="font-semibold text-emerald-600 dark:text-emerald-400">Condizioni Soddisfatte:</div>
+                    <ul className="mt-1 space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
                       {detailSignal.conditionsMet.map((c, i) => (
                         <li key={i} className="flex items-start gap-1.5">
-                          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500 dark:text-emerald-400" />
                           <span>{c}</span>
                         </li>
                       ))}
@@ -820,13 +842,13 @@ export const MarketsView: React.FC = () => {
 
                   {detailSignal.conditionsUnmet.length > 0 && (
                     <div>
-                      <div className="font-semibold text-amber-400">
+                      <div className="font-semibold text-amber-600 dark:text-amber-400">
                         Condizioni Non Soddisfatte / Filtri No-Trade:
                       </div>
-                      <ul className="mt-1 space-y-1 text-[11px] text-slate-400">
+                      <ul className="mt-1 space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
                         {detailSignal.conditionsUnmet.map((c, i) => (
                           <li key={i} className="flex items-start gap-1.5">
-                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500 dark:text-amber-400" />
                             <span>{c}</span>
                           </li>
                         ))}
@@ -835,7 +857,7 @@ export const MarketsView: React.FC = () => {
                   )}
                 </div>
 
-                <div className="mt-3 border-t border-slate-800 pt-2.5 text-[11px] text-slate-400">
+                <div className="mt-3 border-t border-slate-200 dark:border-slate-800 pt-2.5 text-[11px] text-slate-500 dark:text-slate-400">
                   <div>
                     <strong>Focus Metodologico ({horizonSpec.label}):</strong>
                   </div>
@@ -852,7 +874,7 @@ export const MarketsView: React.FC = () => {
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-anthracite-850">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Layers className="h-4 w-4 text-brand-400" />
+                  <Layers className="h-4 w-4 text-brand-500" />
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
                     Scheda Broker & Nomenclatura
                   </h3>
@@ -862,7 +884,7 @@ export const MarketsView: React.FC = () => {
                   onClick={() => setShowBrokerCsvModal(!showBrokerCsvModal)}
                   className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
                 >
-                  <FileSpreadsheet className="h-3 w-3 text-brand-400" />
+                  <FileSpreadsheet className="h-3 w-3 text-brand-500" />
                   Importa CSV MT4/MT5
                 </button>
               </div>
@@ -873,10 +895,10 @@ export const MarketsView: React.FC = () => {
                     key={bCode}
                     type="button"
                     onClick={() => setSelectedBrokerCode(bCode)}
-                    className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
+                    className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
                       selectedBrokerCode === bCode
-                        ? 'bg-brand-500 text-anthracite-950'
-                        : 'bg-slate-100 text-slate-600 dark:bg-anthracite-900 dark:text-slate-400'
+                        ? 'bg-brand-500 text-anthracite-950 font-bold'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-anthracite-900 dark:text-slate-400'
                     }`}
                   >
                     {bCode}
@@ -893,10 +915,10 @@ export const MarketsView: React.FC = () => {
                     <span
                       className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
                         selectedBrokerMapping.verificationStatus === 'VERIFIED'
-                          ? 'bg-emerald-500/15 text-emerald-400'
+                          ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                           : selectedBrokerMapping.verificationStatus === 'USER_CONFIRMED'
-                            ? 'bg-sky-500/15 text-sky-400'
-                            : 'bg-amber-500/15 text-amber-400'
+                            ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+                            : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
                       }`}
                     >
                       {selectedBrokerMapping.verificationStatus}
@@ -905,25 +927,25 @@ export const MarketsView: React.FC = () => {
 
                   <div className="num-mono text-xs">
                     Simbolo Esatto:{' '}
-                    <strong className="text-brand-400">
+                    <strong className="text-brand-600 dark:text-brand-400">
                       {selectedBrokerMapping.brokerSymbol}
                     </strong>
                   </div>
-                  <div className="text-[11px] text-slate-400">
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400">
                     Tipo Contratto: <strong>{selectedBrokerMapping.contractType}</strong> • Valuta:{' '}
                     <strong>{selectedBrokerMapping.currency}</strong> • Venue:{' '}
                     {selectedBrokerMapping.venueLabel}
                   </div>
-                  <div className="text-[11px] text-slate-400">
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400">
                     <strong>Costi Documentati:</strong> {selectedBrokerMapping.commissionNotes}
                   </div>
-                  <div className="text-[11px] text-slate-400">
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400">
                     <strong>Fonte Corrispondenza:</strong>{' '}
                     {selectedBrokerMapping.verificationSource}
                   </div>
 
                   {selectedBrokerMapping.spotVsDerivativeWarning && (
-                    <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-2.5 text-[11px] text-red-300">
+                    <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 text-[11px] text-red-700 dark:text-red-300">
                       <ShieldAlert className="mr-1 inline h-3.5 w-3.5" />
                       {selectedBrokerMapping.spotVsDerivativeWarning}
                     </div>
@@ -932,12 +954,12 @@ export const MarketsView: React.FC = () => {
               ) : (
                 <div className="space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3.5 text-xs">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-amber-300">
+                    <span className="font-bold text-amber-700 dark:text-amber-300">
                       Stato Corrispondenza: UNVERIFIED
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-400">
-                    Per regola rigorosa (Sezione 8), DemInvest non inventa mai simboli broker non verificati per <strong>{selectedBrokerCode}</strong>. Puoi registrare manualmente il simbolo esatto del tuo intermediario qui sotto:
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                    Per regola rigorosa, DemInvest non inventa mai simboli broker non verificati per <strong>{selectedBrokerCode}</strong>. Puoi registrare manualmente il simbolo esatto del tuo intermediario qui sotto:
                   </p>
                   <form onSubmit={handleManualBrokerConfirm} className="space-y-2">
                     <div className="flex gap-2">
@@ -946,7 +968,7 @@ export const MarketsView: React.FC = () => {
                         value={manualBrokerSymbol}
                         onChange={(e) => setManualBrokerSymbol(e.target.value)}
                         placeholder={`Simbolo su ${selectedBrokerCode} (es. ${currentInstrument.ticker})`}
-                        className="flex-1 rounded-lg border border-slate-700 bg-anthracite-900 px-2.5 py-1.5 text-xs text-white"
+                        className="flex-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
                       />
                       <select
                         value={manualContractType}
@@ -955,7 +977,7 @@ export const MarketsView: React.FC = () => {
                             e.target.value as 'SPOT' | 'CASH_SHARE' | 'ETF_SHARE' | 'CFD'
                           )
                         }
-                        className="rounded-lg border border-slate-700 bg-anthracite-900 px-2 py-1.5 text-xs text-white"
+                        className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
                       >
                         <option value="SPOT">SPOT</option>
                         <option value="CASH_SHARE">AZIONE CASH</option>
@@ -965,7 +987,7 @@ export const MarketsView: React.FC = () => {
                     </div>
                     <button
                       type="submit"
-                      className="w-full rounded-lg bg-brand-500/20 py-1.5 text-xs font-semibold text-brand-300 hover:bg-brand-500 hover:text-anthracite-950"
+                      className="w-full rounded-lg bg-brand-500/15 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-500 hover:text-anthracite-950 dark:text-brand-300"
                     >
                       Conferma Manualmente (USER_CONFIRMED)
                     </button>
@@ -977,25 +999,25 @@ export const MarketsView: React.FC = () => {
               {showBrokerCsvModal && (
                 <form
                   onSubmit={handleBrokerCsvImport}
-                  className="mt-3 space-y-2 rounded-xl border border-slate-700 bg-anthracite-900 p-3 text-xs"
+                  className="mt-3 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-anthracite-900"
                 >
-                  <div className="font-semibold text-brand-400">
+                  <div className="font-semibold text-brand-600 dark:text-brand-400">
                     Importazione Elenco Strumenti da CSV (MetaTrader 4/5 o Broker):
                   </div>
                   <textarea
                     rows={3}
                     value={csvInputText}
                     onChange={(e) => setCsvInputText(e.target.value)}
-                    className="w-full rounded border border-slate-700 bg-anthracite-950 p-2 font-mono text-[10px] text-slate-200"
+                    className="w-full rounded border border-slate-300 bg-white p-2 font-mono text-[10px] text-slate-900 dark:border-slate-700 dark:bg-anthracite-950 dark:text-slate-200"
                   />
                   <button
                     type="submit"
-                    className="w-full rounded-lg bg-brand-500 py-1.5 text-xs font-semibold text-anthracite-950"
+                    className="w-full rounded-lg bg-brand-500 py-1.5 text-xs font-semibold text-anthracite-950 hover:bg-brand-400"
                   >
                     Importa Simboli CSV
                   </button>
                   {csvFeedback && (
-                    <div className="text-[11px] text-emerald-400">{csvFeedback}</div>
+                    <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">{csvFeedback}</div>
                   )}
                 </form>
               )}
@@ -1015,7 +1037,7 @@ export const MarketsView: React.FC = () => {
                   onChange={(e) => setAlertThreshold(e.target.value)}
                   placeholder={`Soglia prezzo in ${currentInstrument.quoteCurrency}...`}
                   data-testid="quick-alert-input"
-                  className="flex-1 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
+                  className="flex-1 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-anthracite-900 dark:text-white"
                 />
                 <button
                   type="submit"

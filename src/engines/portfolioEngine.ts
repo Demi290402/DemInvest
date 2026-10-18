@@ -289,8 +289,15 @@ export function calculatePortfolioAnalytics(params: {
   }
 
   // Calcolo pesi di allocazione, rischio di concentrazione (HHI) ed esposizione valutaria
-  const totalBaseForWeights =
-    estimatedMarketValueInBase > 0 ? estimatedMarketValueInBase : totalInvestedCostInBase;
+  // Standard HHI su pesi normalizzati non negativi: HHI = sum((w_i * 100)^2), massimo teorico rigoroso = 10000.
+  // Calcolo base omogenea: somma dei valori di riferimento (valore di mercato se quotato, costo storico se non quotato).
+  const totalInvestedRefVal = roundAccounting(
+    positions.reduce(
+      (acc, pos) => acc + Math.max(0, pos.estimatedMarketValueInBase ?? pos.totalCostBasisInBase),
+      0
+    ),
+    2
+  );
 
   let hhiSum = 0;
   let topWeight = 0;
@@ -299,10 +306,10 @@ export function calculatePortfolioAnalytics(params: {
   const byCurrency = new Map<string, number>();
 
   for (const pos of positions) {
-    const refVal = pos.estimatedMarketValueInBase ?? pos.totalCostBasisInBase;
+    const refVal = Math.max(0, pos.estimatedMarketValueInBase ?? pos.totalCostBasisInBase);
     const weightPct =
-      totalBaseForWeights > 0
-        ? roundAccounting((refVal / totalBaseForWeights) * 100, 2)
+      totalInvestedRefVal > 0
+        ? roundAccounting((refVal / totalInvestedRefVal) * 100, 2)
         : 0;
     pos.allocationWeightPct = weightPct;
 
@@ -322,25 +329,26 @@ export function calculatePortfolioAnalytics(params: {
     );
   }
 
-  const herfindahlIndex = Math.round(hhiSum);
+  // Guardrail matematico: HHI deve rigorosamente appartenere all'intervallo [0, 10000]
+  const herfindahlIndex = Math.min(10000, Math.max(0, Math.round(hhiSum)));
   const warnings: string[] = [];
   let concentrationLevel: 'LOW' | 'MODERATE' | 'HIGH_CONCENTRATION_RISK' = 'LOW';
 
-  if (topWeight >= 45 || herfindahlIndex >= 3500) {
+  if (topWeight >= 40 || herfindahlIndex >= 2500) {
     concentrationLevel = 'HIGH_CONCENTRATION_RISK';
     warnings.push(
-      `Concentrazione elevata: la prima posizione (${topTicker}) rappresenta il ${topWeight}% del portafoglio investito (Indice HHI = ${herfindahlIndex}/10000).`
+      `Concentrazione elevata: la prima posizione (${topTicker || 'Principale'}) rappresenta il ${topWeight}% del portafoglio investito (Indice HHI = ${herfindahlIndex}/10000).`
     );
-  } else if (topWeight >= 25 || herfindahlIndex >= 2000) {
+  } else if (topWeight >= 25 || herfindahlIndex >= 1500) {
     concentrationLevel = 'MODERATE';
     warnings.push(
-      `Concentrazione moderata sulla posizione principale ${topTicker} (${topWeight}%).`
+      `Concentrazione moderata sulla posizione principale ${topTicker || 'Principale'} (${topWeight}%). Indice HHI = ${herfindahlIndex}/10000.`
     );
   }
 
   if (incompletePositionsCount > 0) {
     warnings.push(
-      `Attenzione: ${incompletePositionsCount} posizione/i non dispongono di un prezzo aggiornato verificato. La valutazione complessiva è contrassegnata come INCOMPLETA.`
+      `Attenzione: ${incompletePositionsCount} posizione/i non dispongono di un prezzo aggiornato verificato. La valutazione complessiva e la concentrazione includono stime a costo storico.`
     );
   }
 
@@ -381,16 +389,16 @@ export function calculatePortfolioAnalytics(params: {
       assetClass,
       valueInBase,
       weightPct:
-        totalBaseForWeights > 0
-          ? roundAccounting((valueInBase / totalBaseForWeights) * 100, 2)
+        totalInvestedRefVal > 0
+          ? roundAccounting((valueInBase / totalInvestedRefVal) * 100, 2)
           : 0,
     })),
     currencyExposure: Array.from(byCurrency.entries()).map(([currency, valueInBase]) => ({
       currency,
       valueInBase,
       weightPct:
-        totalBaseForWeights > 0
-          ? roundAccounting((valueInBase / totalBaseForWeights) * 100, 2)
+        totalInvestedRefVal > 0
+          ? roundAccounting((valueInBase / totalInvestedRefVal) * 100, 2)
           : 0,
     })),
     positions,

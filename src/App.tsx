@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Bell,
   Bot,
@@ -10,6 +10,7 @@ import {
   Settings,
   ShieldAlert,
   ShieldCheck,
+  Sliders,
   Sun,
   Wallet,
   WifiOff,
@@ -22,6 +23,7 @@ import { MarketsView } from './views/MarketsView';
 import { OpportunitiesView } from './views/OpportunitiesView';
 import { TradingLabView } from './views/TradingLabView';
 import { PortfolioView } from './views/PortfolioView';
+import { MoreView } from './views/MoreView';
 import {
   NotificationsView,
   SettingsView,
@@ -258,39 +260,27 @@ const MainShell: React.FC = () => {
             </button>
           </div>
         </div>
-
-        {/* Barra di Navigazione Rapida Superiore per Schermi Mobile / Tablet (Garantisce compatibilità e test selectors) */}
-        <div className="flex overflow-x-auto border-t border-slate-200/80 px-2 py-1.5 lg:hidden dark:border-navy-800/80 scrollbar-none" aria-label="Navigazione Rapida">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={`top-mobile-${item.id}`}
-                type="button"
-                onClick={() => setActiveTab(item.id)}
-                data-testid={`mobile-nav-${item.id}`}
-                className={`flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
-                  isActive
-                    ? 'bg-brand-500/15 text-brand-smart font-bold'
-                    : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-navy-850'
-                }`}
-              >
-                <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>{item.label}</span>
-                {item.badge !== undefined && (
-                  <span className="rounded-full bg-brand-500 px-1 text-[9px] font-bold text-anthracite-950">
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
       </header>
 
-      {/* Contenuto Principale (con padding inferiore protetto per la bottom bar mobile) */}
-      <main className="mx-auto max-w-7xl px-4 py-6 pb-28 lg:pb-8" id="main-content">
+      {/* Contenuto Principale con safe-area padding per mobile bottom bar */}
+      <main className="mx-auto max-w-7xl px-4 py-6 pb-24 lg:pb-8" id="main-content">
+        {/* Pulsante di ritorno rapido per sottomoduli secondari su mobile */}
+        {['lab', 'notifications', 'settings'].includes(activeTab) && (
+          <div className="mb-4 flex items-center justify-between lg:hidden">
+            <button
+              type="button"
+              onClick={() => setActiveTab('more')}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-200 dark:bg-navy-850 dark:text-slate-200 dark:hover:bg-navy-800"
+            >
+              <span>&larr;</span>
+              <span>Torna a Altro</span>
+            </button>
+            <span className="text-xs font-medium text-slate-400 capitalize">
+              {activeTab === 'lab' ? 'Trading Lab' : activeTab === 'notifications' ? 'Notifiche' : 'Impostazioni'}
+            </span>
+          </div>
+        )}
+
         {activeTab === 'dashboard' && <DashboardView onNavigateTab={setActiveTab} />}
         {activeTab === 'markets' && <MarketsView />}
         {activeTab === 'opportunities' && (
@@ -301,64 +291,57 @@ const MainShell: React.FC = () => {
             }}
           />
         )}
-        {activeTab === 'lab' && <TradingLabView />}
         {activeTab === 'portfolio' && <PortfolioView />}
+        {activeTab === 'more' && <MoreView onNavigateTab={setActiveTab} />}
+        {activeTab === 'lab' && <TradingLabView />}
         {activeTab === 'notifications' && <NotificationsView />}
         {activeTab === 'settings' && <SettingsView />}
       </main>
 
-      {/* Floating Action Button (FAB) Mobile per DemInvest AI (Sempre a portata di pollice) */}
-      <button
-        type="button"
-        onClick={() => setIsAiDrawerOpen(true)}
-        className="fixed bottom-20 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-500 text-anthracite-950 shadow-lg shadow-brand-500/25 transition hover:scale-105 active:scale-95 lg:hidden focus-ring"
-        aria-label="Apri assistente DemInvest AI"
-      >
-        <Bot className="h-6 w-6" aria-hidden="true" />
-      </button>
-
-      {/* Ergonomic Mobile Bottom Navigation Bar (Sezione 8.2 Master Prompt 4) */}
+      {/* Ergonomic Mobile Bottom Navigation Bar a 5 Destinazioni Principali (Master Prompt 5, Sez. 7.4 & 19.3) */}
       <nav
-        className="fixed bottom-0 inset-x-0 z-40 border-t border-slate-200/90 bg-white/95 px-2 py-1.5 backdrop-blur-lg dark:border-navy-800/90 dark:bg-navy-950/95 lg:hidden"
-        aria-label="Navigazione Ergonomica Inferiore"
+        className="fixed bottom-0 inset-x-0 z-40 border-t border-slate-200/90 bg-white/95 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-lg dark:border-navy-800/90 dark:bg-navy-950/95 lg:hidden"
+        aria-label="Navigazione Ergonomica Inferiore Mobile"
       >
-        <div className="mx-auto grid grid-cols-5 max-w-md items-center">
+        <div className="mx-auto grid grid-cols-5 max-w-md items-center py-1">
           {[
-            { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+            { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
             { id: 'markets', label: 'Mercati', icon: LineChart },
             { id: 'opportunities', label: 'Opportunità', icon: Compass },
             { id: 'portfolio', label: 'Portafoglio', icon: Wallet },
             {
-              id: 'notifications',
-              label: 'Avvisi',
-              icon: Bell,
+              id: 'more',
+              label: 'Altro',
+              icon: Sliders,
               badge: unreadCount > 0 ? unreadCount : undefined,
+              isActive: activeTab === 'more' || ['lab', 'notifications', 'settings'].includes(activeTab),
             },
           ].map((tab) => {
             const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
+            const isTabActive = tab.isActive !== undefined ? tab.isActive : activeTab === tab.id;
             return (
               <button
-                key={`bottom-${tab.id}`}
+                key={`mobile-bottom-${tab.id}`}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`relative flex flex-col items-center justify-center py-1 text-[10px] font-semibold transition touch-target ${
-                  isActive
-                    ? 'text-brand-smart dark:text-brand-smart'
+                data-testid={`mobile-nav-${tab.id}`}
+                className={`relative flex flex-col items-center justify-center py-1.5 text-[10px] font-semibold transition touch-target ${
+                  isTabActive
+                    ? 'text-teal-600 dark:text-teal-400 font-bold'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                 }`}
               >
                 <div className="relative">
                   <Icon className="h-5 w-5" aria-hidden="true" />
                   {tab.badge !== undefined && (
-                    <span className="absolute -top-1 -right-2 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-brand-500 px-1 text-[9px] font-bold text-anthracite-950">
+                    <span className="absolute -top-1 -right-2 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-teal-600 px-1 text-[9px] font-bold text-white">
                       {tab.badge}
                     </span>
                   )}
                 </div>
                 <span className="mt-0.5 tracking-tight truncate max-w-[64px]">{tab.label}</span>
-                {isActive && (
-                  <span className="absolute bottom-0 h-1 w-5 rounded-full bg-brand-500" />
+                {isTabActive && (
+                  <span className="absolute bottom-0 h-0.5 w-6 rounded-full bg-teal-600 dark:bg-teal-400" />
                 )}
               </button>
             );

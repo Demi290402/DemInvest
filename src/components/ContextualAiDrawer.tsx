@@ -61,10 +61,10 @@ export const ContextualAiDrawer: React.FC = () => {
   };
 
   const quickPrompts = [
-    `Analizza lo strumento attivo (${currentInst?.ticker}) sull'orizzonte ${activeHorizon} e spiega i rischi.`,
-    `Qual è la differenza tra acquistare ${currentInst?.ticker} Spot e negoziare un CFD su ${selectedBrokerCode}?`,
-    `Valuta la concentrazione e l'esposizione valutaria del mio portafoglio manuale.`,
-    `Simula gli scenari quantitativi basati sull'ATR(14) per ${currentInst?.ticker}.`,
+    `Qual è la sintesi tecnica attuale su ${currentInst?.ticker} e quali scenari emergono?`,
+    `Quali sono i livelli chiave di supporto e resistenza per ${currentInst?.ticker}?`,
+    `Qual è la differenza pratica tra acquistare ${currentInst?.ticker} Spot e negoziare un derivato su ${selectedBrokerCode}?`,
+    `Come valuti la concentrazione e la diversificazione del mio portafoglio?`,
   ];
 
   return (
@@ -82,22 +82,24 @@ export const ContextualAiDrawer: React.FC = () => {
         {/* Header contestuale */}
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-navy-800">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-500/15 text-brand-400">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-500/15 text-brand-600 dark:text-brand-400">
               <Bot className="h-5 w-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold">DemInvest AI — Analista Contestuale</h3>
-                <span className="rounded bg-brand-500/15 px-2 py-0.5 text-[10px] font-bold text-brand-400">
-                  TOOL-VERIFIED
+                <h3 id="ai-drawer-title" className="text-sm font-bold text-slate-900 dark:text-white">
+                  DemInvest AI — Analista Contestuale
+                </h3>
+                <span className="rounded bg-brand-500/15 px-2 py-0.5 text-[10px] font-bold text-brand-600 dark:text-brand-400">
+                  Dati Verificati
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Contesto attivo: <strong>{currentInst?.ticker}</strong> | Orizzonte:{' '}
-                <strong>{activeHorizon}</strong> | Piattaforma:{' '}
+                Strumento: <strong>{currentInst?.ticker}</strong> | Orizzonte:{' '}
+                <strong>{activeHorizon}</strong> | Intermediario:{' '}
                 <strong>{selectedBrokerCode}</strong>
                 {currentQuote?.observedAt
-                  ? ` | Dato: ${currentQuote.observedAt.slice(11, 19)} UTC`
+                  ? ` | Feed: ${currentQuote.observedAt.slice(11, 19)} UTC`
                   : ''}
               </p>
             </div>
@@ -107,37 +109,37 @@ export const ContextualAiDrawer: React.FC = () => {
             <button
               type="button"
               onClick={() => setShowToolLogs(!showToolLogs)}
-              className="flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+              className="flex items-center gap-1 rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-anthracite-900 dark:text-slate-300 dark:hover:bg-slate-800"
             >
-              <Terminal className="h-3.5 w-3.5 text-brand-400" />
+              <Terminal className="h-3.5 w-3.5 text-brand-500" />
               Tool Logs ({aiToolLogs.length})
             </button>
             <button
               type="button"
               onClick={() => setIsAiDrawerOpen(false)}
-              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-white"
             >
               <X className="h-5 w-5" />
             </button>
           </div>
         </div>
 
-        {/* Banner regole anti-allucinazione */}
+        {/* Banner trasparenza decisionale */}
         <div className="border-b border-slate-200 bg-slate-50 px-5 py-2 text-[11px] text-slate-600 dark:border-slate-800 dark:bg-anthracite-850 dark:text-slate-400">
-          <ShieldAlert className="mr-1.5 inline h-3.5 w-3.5 text-brand-400" />
-          <strong>Presidio Anti-Allucinazione:</strong> L'assistente interroga esclusivamente tool backend autorizzati, distingue dati verificati da ipotesi e non può inviare ordini a nessun broker.
+          <ShieldAlert className="mr-1.5 inline h-3.5 w-3.5 text-brand-500" />
+          <strong>Principio di trasparenza:</strong> L'assistente interroga esclusivamente fonti e calcoli deterministici verificati, distingue fatti da ipotesi e non trasmette ordini di acquisto o vendita.
           {dataExecutionMode === 'DEMO' && (
-            <span className="ml-2 font-bold text-amber-400">
-              [MODALITÀ DEMO ATTIVA]
+            <span className="ml-2 font-bold text-amber-600 dark:text-amber-400">
+              [MODALITÀ DEMO]
             </span>
           )}
         </div>
 
         {/* Vista opzionale Audit Log dei Tool Backend */}
         {showToolLogs && (
-          <div className="max-h-56 overflow-y-auto border-b border-slate-800 bg-anthracite-950 p-4 font-mono text-[11px] text-slate-300">
-            <div className="mb-2 font-bold text-brand-400">
-              Registro Esecuzioni Tool Backend Autorizzati (ai_tool_execution_logs):
+          <div className="max-h-56 overflow-y-auto border-b border-slate-200 bg-slate-100 p-4 font-mono text-[11px] text-slate-800 dark:border-slate-800 dark:bg-anthracite-950 dark:text-slate-300">
+            <div className="mb-2 font-bold text-brand-600 dark:text-brand-400">
+              Registro Esecuzioni Tool Backend (ai_tool_execution_logs):
             </div>
             {aiToolLogs.length === 0 ? (
               <div className="text-slate-500">Nessun tool ancora invocato in questa sessione.</div>
@@ -146,18 +148,18 @@ export const ContextualAiDrawer: React.FC = () => {
                 {aiToolLogs.slice(0, 10).map((log) => (
                   <div
                     key={log.id}
-                    className="rounded border border-slate-800 bg-anthracite-900 p-2"
+                    className="rounded border border-slate-300 bg-white p-2 dark:border-slate-800 dark:bg-anthracite-900"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-emerald-400">{log.toolName}()</span>
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">{log.toolName}()</span>
                       <span className="text-slate-500">
                         {log.executionMs}ms — {log.status} — {log.executedAt.slice(11, 19)} UTC
                       </span>
                     </div>
-                    <div className="mt-1 truncate text-slate-400">
+                    <div className="mt-1 truncate text-slate-600 dark:text-slate-400">
                       Input: {JSON.stringify(log.inputParams)}
                     </div>
-                    <div className="truncate text-slate-300">
+                    <div className="truncate text-slate-700 dark:text-slate-300">
                       Output: {JSON.stringify(log.outputSummary)}
                     </div>
                   </div>
@@ -167,16 +169,16 @@ export const ContextualAiDrawer: React.FC = () => {
           </div>
         )}
 
-        {/* Messaggi conversazione */}
+        {/* Messaggi conversazione con gerarchia a 4 livelli */}
         <div className="flex-1 space-y-4 overflow-y-auto p-5">
           {aiMessages.length === 0 && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-anthracite-850">
-              <div className="flex items-center gap-2 text-sm font-semibold text-brand-500">
+              <div className="flex items-center gap-2 text-sm font-semibold text-brand-600 dark:text-brand-400">
                 <Sparkles className="h-4 w-4" />
-                <span>Domande Contestuali Consigliate</span>
+                <span>Richieste Guidate</span>
               </div>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                Seleziona una richiesta per eseguire i tool quantitativi sullo strumento e sul portafoglio attivo:
+              <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                Seleziona una domanda per avviare l'analisi deterministica:
               </p>
               <div className="mt-3 space-y-2">
                 {quickPrompts.map((qp, idx) => (
@@ -184,7 +186,7 @@ export const ContextualAiDrawer: React.FC = () => {
                     key={idx}
                     type="button"
                     onClick={() => handleSend(qp)}
-                    className="block w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-left text-xs font-medium transition hover:border-brand-500 dark:border-slate-700/80 dark:bg-anthracite-900 dark:hover:border-brand-500"
+                    className="block w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-left text-xs font-medium text-slate-800 transition hover:border-brand-500 hover:bg-slate-50 dark:border-slate-700/80 dark:bg-anthracite-900 dark:text-slate-200 dark:hover:border-brand-500"
                   >
                     {qp}
                   </button>
@@ -196,67 +198,94 @@ export const ContextualAiDrawer: React.FC = () => {
           {aiMessages.map((msg) => (
             <div
               key={msg.id}
-              className={`rounded-xl p-4 text-xs leading-relaxed ${
+              className={`rounded-2xl p-4 text-xs leading-relaxed ${
                 msg.role === 'user'
                   ? 'ml-8 border border-brand-500/30 bg-brand-500/10 text-slate-900 dark:text-slate-100'
-                  : 'mr-2 border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-anthracite-850'
+                  : 'mr-2 border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-anthracite-850 dark:text-slate-200'
               }`}
             >
-              <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-slate-400">
-                <span>
-                  {msg.role === 'user'
-                    ? 'Tu'
-                    : 'DemInvest AI'}
+              <div className="mb-2.5 flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                <span className="font-bold text-slate-900 dark:text-white">
+                  {msg.role === 'user' ? 'Tu' : 'DemInvest AI'}
                 </span>
                 <span>{msg.createdAt.slice(11, 19)} UTC</span>
               </div>
 
               {msg.structuredSections ? (
                 <div className="space-y-3">
-                  <div>
-                    <div className="font-bold text-brand-400">1. Dati Verificati (Fonte & Timestamp):</div>
-                    <ul className="mt-1 list-disc space-y-1 pl-4">
-                      {msg.structuredSections.verifiedData.map((item, i) => (
-                        <li key={i}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
+                  {/* Livello 1: Risposta Diretta / Sintesi Chiave */}
+                  {msg.structuredSections.technicalInterpretations.length > 0 && (
+                    <div className="rounded-xl border border-brand-500/20 bg-brand-500/5 p-3">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-brand-600 dark:text-brand-400">
+                        Sintesi dell'Analisi
+                      </div>
+                      <div className="mt-1 text-slate-900 dark:text-slate-100 font-medium">
+                        {msg.structuredSections.technicalInterpretations[0]}
+                      </div>
+                    </div>
+                  )}
 
-                  {msg.structuredSections.quantitativeCalculations.length > 0 && (
+                  {/* Livello 2: Motivazione Tecnica e Finanziaria */}
+                  {msg.structuredSections.technicalInterpretations.length > 1 && (
                     <div>
-                      <div className="font-bold text-sky-400">2. Calcoli Quantitativi Deterministici:</div>
-                      <ul className="mt-1 list-disc space-y-1 pl-4">
-                        {msg.structuredSections.quantitativeCalculations.map((item, i) => (
+                      <div className="font-bold text-slate-800 dark:text-slate-200">
+                        Motivazione & Rationale:
+                      </div>
+                      <ul className="mt-1 list-disc space-y-1 pl-4 text-slate-700 dark:text-slate-300">
+                        {msg.structuredSections.technicalInterpretations.slice(1).map((item, i) => (
                           <li key={i}>{item}</li>
                         ))}
                       </ul>
                     </div>
                   )}
 
-                  <div>
-                    <div className="font-bold text-amber-400">3. Interpretazioni Tecniche:</div>
-                    <ul className="mt-1 list-disc space-y-1 pl-4">
-                      {msg.structuredSections.technicalInterpretations.map((item, i) => (
-                        <li key={i}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
+                  {/* Livello 3: Rischi, Scenari e Condizioni di Invalidazione */}
+                  {msg.structuredSections.hypothesesAndScenarios.length > 0 && (
+                    <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
+                      <div className="font-bold text-amber-700 dark:text-amber-300">
+                        Rischi & Condizioni di Invalidazione:
+                      </div>
+                      <ul className="mt-1 list-disc space-y-1 pl-4 text-slate-700 dark:text-slate-300">
+                        {msg.structuredSections.hypothesesAndScenarios.map((item, i) => (
+                          <li key={i}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
 
-                  <div>
-                    <div className="font-bold text-purple-400">4. Ipotesi e Scenari di Rischio:</div>
-                    <ul className="mt-1 list-disc space-y-1 pl-4">
-                      {msg.structuredSections.hypothesesAndScenarios.map((item, i) => (
-                        <li key={i}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
+                  {/* Livello 4: Accordion Espandibile per Dati Tecnici e Verificati */}
+                  <details className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] transition dark:border-slate-800 dark:bg-anthracite-900">
+                    <summary className="cursor-pointer font-semibold text-slate-700 dark:text-slate-300 select-none hover:text-brand-600 dark:hover:text-brand-400">
+                      1. Dati Verificati, Calcoli & Fonti ({msg.structuredSections.verifiedData.length + msg.structuredSections.quantitativeCalculations.length})
+                    </summary>
+                    <div className="mt-3 space-y-2.5 border-t border-slate-200 pt-2.5 dark:border-slate-800">
+                      <div>
+                        <div className="font-bold text-slate-800 dark:text-slate-300">1. Dati Verificati:</div>
+                        <ul className="mt-1 list-disc space-y-0.5 pl-4 text-slate-600 dark:text-slate-400">
+                          {msg.structuredSections.verifiedData.map((item, i) => (
+                            <li key={i}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
 
-                  <div className="border-t border-slate-200 pt-2 text-[11px] text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                    <div className="font-semibold">5. Limitazioni e Fonti Verificate:</div>
-                    {msg.structuredSections.limitationsAndSources.map((item, i) => (
-                      <div key={i}>• {item}</div>
-                    ))}
-                  </div>
+                      {msg.structuredSections.quantitativeCalculations.length > 0 && (
+                        <div>
+                          <div className="font-bold text-slate-800 dark:text-slate-300">Calcoli Deterministici:</div>
+                          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-slate-600 dark:text-slate-400">
+                            {msg.structuredSections.quantitativeCalculations.map((item, i) => (
+                              <li key={i}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      <div className="text-[10px] text-slate-500">
+                        {msg.structuredSections.limitationsAndSources.map((item, i) => (
+                          <div key={i}>• {item}</div>
+                        ))}
+                      </div>
+                    </div>
+                  </details>
                 </div>
               ) : (
                 <div className="whitespace-pre-wrap">{msg.content}</div>
@@ -264,14 +293,14 @@ export const ContextualAiDrawer: React.FC = () => {
 
               {msg.toolCalls && msg.toolCalls.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-200/60 pt-2 dark:border-slate-800">
-                  <Database className="h-3.5 w-3.5 text-brand-400" />
-                  <span className="text-[10px] text-slate-400">Tool eseguiti:</span>
+                  <Database className="h-3.5 w-3.5 text-brand-500" />
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400">Tool eseguiti:</span>
                   {msg.toolCalls.map((tc) => (
                     <span
                       key={tc.id}
-                      className="inline-flex items-center gap-1 rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] dark:bg-slate-800"
+                      className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-700 dark:bg-slate-800 dark:text-slate-300"
                     >
-                      <CheckCircle2 className="h-2.5 w-2.5 text-brand-400" />
+                      <CheckCircle2 className="h-2.5 w-2.5 text-brand-500" />
                       {tc.toolName}
                     </span>
                   ))}
