@@ -10,14 +10,15 @@ async function generateIcons() {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
 
   const targets = [
-    { file: 'public/icons/icon-192.png', size: 192, pad: 14, bg: '#0F172A', rounded: false },
-    { file: 'public/icons/icon-512.png', size: 512, pad: 36, bg: '#0F172A', rounded: false },
-    { file: 'public/icons/icon-maskable-512.png', size: 512, pad: 80, bg: '#0F172A', rounded: false },
-    { file: 'public/icons/apple-touch-icon.png', size: 180, pad: 14, bg: '#0F172A', rounded: false },
-    { file: 'public/apple-touch-icon.png', size: 180, pad: 14, bg: '#0F172A', rounded: false },
-    // Also transparent version for standard web favicon
-    { file: 'public/icons/icon-192-transparent.png', size: 192, pad: 8, bg: 'transparent', rounded: false },
-    { file: 'public/icons/icon-512-transparent.png', size: 512, pad: 16, bg: 'transparent', rounded: false }
+    { file: 'public/icons/icon-192.png', size: 192, pad: 16, bg: '#0F172A' },
+    { file: 'public/icons/icon-512.png', size: 512, pad: 44, bg: '#0F172A' },
+    { file: 'public/icons/icon-maskable-192.png', size: 192, pad: 32, bg: '#0F172A' },
+    { file: 'public/icons/icon-maskable-512.png', size: 512, pad: 84, bg: '#0F172A' },
+    { file: 'public/icons/apple-touch-icon.png', size: 180, pad: 14, bg: '#0F172A' },
+    { file: 'public/apple-touch-icon.png', size: 180, pad: 14, bg: '#0F172A' },
+    { file: 'public/favicon.png', size: 192, pad: 6, bg: 'transparent' },
+    { file: 'public/icons/icon-192-transparent.png', size: 192, pad: 6, bg: 'transparent' },
+    { file: 'public/icons/icon-512-transparent.png', size: 512, pad: 16, bg: 'transparent' },
   ];
 
   for (const t of targets) {
@@ -59,12 +60,28 @@ async function generateIcons() {
       path: path.resolve(t.file),
       omitBackground: t.bg === 'transparent'
     });
-    console.log(`Generated: ${t.file} (${t.size}x${t.size})`);
+
+    const s = fs.statSync(path.resolve(t.file));
+    console.log(`Generated: ${t.file} (${t.size}x${t.size}) -> ${s.size} bytes`);
     await page.close();
   }
 
   await browser.close();
-  console.log('All mobile icons generated successfully!');
+
+  // Overwrite SVG fallbacks with the high-res embedded SVG
+  const svg192 = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" fill="#0F172A"/>
+  <image href="${logoSrc}" x="16" y="16" width="160" height="160" preserveAspectRatio="xMidYMid meet"/>
+</svg>`;
+  const svg512 = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#0F172A"/>
+  <image href="${logoSrc}" x="44" y="44" width="424" height="424" preserveAspectRatio="xMidYMid meet"/>
+</svg>`;
+  fs.writeFileSync(path.resolve('public/icons/icon-192.svg'), svg192);
+  fs.writeFileSync(path.resolve('public/icons/icon-512.svg'), svg512);
+  console.log('Overwritten public/icons/icon-192.svg and icon-512.svg with embedded official logo.');
+
+  console.log('All mobile and PWA icons generated and verified successfully!');
 }
 
 generateIcons().catch((err) => {
