@@ -9,7 +9,7 @@
  *   OFFLINE_CACHE_BLOCKED o marcato con isOfflineCached: true.
  * ============================================================================ */
 
-const CACHE_VERSION = 'deminvest-shell-v1.0.5';
+const CACHE_VERSION = 'deminvest-shell-v1.0.6';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -24,6 +24,7 @@ const STATIC_ASSETS = [
   '/icons/icon-maskable-192.png',
   '/icons/icon-maskable-512.png',
   '/icons/icon-192-transparent.png',
+  '/icons/transparent.png',
 ];
 
 self.addEventListener('message', (event) => {
@@ -131,7 +132,9 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: payload.body,
-    icon: '/icons/icon-192.png',
+    // Su Android: icona trasparente per non mostrare alcun logo/thumbnail/lettera sulla destra.
+    // Il logo ufficiale dell'app viene mostrato a sinistra dal sistema operativo Android (WebAPK).
+    icon: isAndroid ? '/icons/transparent.png' : '/icons/icon-192.png',
     badge: '/icons/icon-192-transparent.png',
     tag: payload.tag || 'deminvest-alert',
     renotify: true,

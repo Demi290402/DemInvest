@@ -79,7 +79,12 @@ async function generateIcons() {
 </svg>`;
   fs.writeFileSync(path.resolve('public/icons/icon-192.svg'), svg192);
   fs.writeFileSync(path.resolve('public/icons/icon-512.svg'), svg512);
+  fs.writeFileSync(
+    path.resolve('public/icons/transparent.png'),
+    Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64')
+  );
   console.log('Overwritten public/icons/icon-192.svg and icon-512.svg with embedded official logo.');
+  console.log('Generated: public/icons/transparent.png (1x1 transparent)');
 
   console.log('All mobile and PWA icons generated and verified successfully!');
 }
